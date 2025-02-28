@@ -99,7 +99,8 @@ class SCGDataset(Dataset):
     """
     for segment in segments:
       segment['acc'] = self.pad(self.invert(self.minmax_norm(segment['acc'])), segment_size)
-      segment['ecg'] = self.pad(self.invert(self.minmax_norm(segment['ecg'])), segment_size)
+      if 'ecg' in segment:
+        segment['ecg'] = self.pad(self.invert(self.minmax_norm(segment['ecg'])), segment_size)
     return segments
 
   def __len__(self):
@@ -255,11 +256,12 @@ def get_channels(db_path, record_name, channel_names, start, stop):
   return channels
 
 
-def get_test_codes_and_record_names(path):
+def get_value_test_codes_and_record_names(path):
   """
   Get all patient codes and record names that may be included in a test set. To 
   maximize available training data, test set should only include patients that 
-  underwent 1 cath and did not undergo physiologic challenge.
+  underwent 1 cath and did not undergo physiologic challenge. This schema is
+  only used for value prediction.
 
   Args:
     path (str): SCG-RHC database path.
@@ -271,8 +273,26 @@ def get_test_codes_and_record_names(path):
   set1 = set(get_record_names_without_challenge(path))
   set2 = set(get_record_names_of_single_caths(path))
   record_names = list(set1.intersection(set2))
-  patient_codes = [get_patient_code(x) for x in record_names]
+  patient_codes = list(set([get_patient_code(x) for x in record_names]))
   return patient_codes, record_names
+
+
+def get_waveform_test_codes_and_record_names(path):
+  """
+  Get all patient codes and record names that may be included in a test set for
+  waveform prediction. Unlike for value prediction, all records are candidates
+  to be in the test set.
+
+  Args:
+    path (str): SCG-RHC database path.
+
+  Returns:
+    patient_codes (list[str]): Patient codes in test set.
+    record_names (list[str]): Record names in test set.
+  """
+  record_names = get_record_names(path)
+  patient_codes = list(set([get_patient_code(x) for x in record_names]))
+  return patient_codes, record_names 
 
 
 def get_train_codes_and_record_names(path, test_record_names):
@@ -432,11 +452,15 @@ def get_challenge_time(path, record_name, start_time):
   return challenge_time
   
 
-def get_segments_from_record(db_path, record_name, RHC_df, RHC_col, segment_size, sample_rate):
+def get_value_segments_from_record(
+  db_path, record_name, acc_channels, ecg_channels, RHC_df, RHC_col, 
+  segment_size, sample_rate):
   """
   Args:
     db_path (str): SCG-RHC database path.
     record_name (str): Record name.
+    acc_channels (list[str]): ACC channels to include.
+    ecg_channels (list[str]): ECG channels to include.
     RHC_df (DataFrame): Contains various RHC values for all recordings.
     RHC_col (str): RHC value of interest.
     segment_size (int): Number of samples in segment.
@@ -497,8 +521,8 @@ def get_segments_from_record(db_path, record_name, RHC_df, RHC_col, segment_size
     else:
       continue
     start, stop = interval
-    acc_signal = get_channels(db_path, record_name, ['patch_ACC_lat', 'patch_ACC_hf', 'patch_ACC_dv'], start, stop)
-    ecg_signal = get_channels(db_path, record_name, ['patch_ECG'], start, stop)
+    acc_signal = get_channels(db_path, record_name, acc_channels, start, stop)
+    ecg_signal = get_channels(db_path, record_name, ecg_channels, start, stop)
     num_segments = acc_signal.shape[0] // segment_size
     for i in range(num_segments):
       start = i * segment_size
@@ -507,22 +531,27 @@ def get_segments_from_record(db_path, record_name, RHC_df, RHC_col, segment_size
       ecg_segment = ecg_signal[start:stop]
       segment = {
         'acc': acc_segment,
-        'ecg': ecg_segment,
         'bmi': bmi,
         'rhc': RHC,
         'record_name': record_name,
         'start': start,
         'stop': stop
       }
+      if ecg_channels:
+        segment['ecg'] = ecg_segment
       segments.append(segment)
   return segments
 
 
-def get_segments(db_path, record_paths, RHC_col, RHC_df, segment_size, sample_rate):
+def get_value_segments(
+  db_path, record_paths, acc_channels, ecg_channels, RHC_col, RHC_df, 
+  segment_size, sample_rate):
   """
   Args:
     db_path (str): SCG-RHC database path.
     record_paths (list[str]): Record paths.
+    acc_channels (list[str]): ACC channels to include.
+    ecg_channels (list[str]): ECG channels to include.
     RHC_col (str): RHC value of interest.
     RHC_df (DataFrame): Contains various RHC values for all recordings.
     segment_size (int): Number of samples in segment.
@@ -534,7 +563,119 @@ def get_segments(db_path, record_paths, RHC_col, RHC_df, segment_size, sample_ra
   """
   segments = []
   for record_path in record_paths:
-    segments.extend(get_segments_from_record(db_path, record_path, RHC_df, RHC_col, segment_size, sample_rate))
+    segments.extend(get_value_segments_from_record(
+      db_path, record_path, acc_channels, ecg_channels, RHC_df, RHC_col, 
+      segment_size, sample_rate))
+  return segments
+
+
+def get_chamber_intervals(db_path, record_name, chamber, sample_rate):
+  """
+  Args:
+    db_path (str): SCG-RHC database path.
+    record_name (str): Record name.
+    chamber (str): Chamber name.
+    sample_rate (int): Sample rate (Hz).
+
+  Returns:
+    intervals (list[tuple]): Start and stop index of when cath was in the given
+    chamber.
+  """
+  intervals = []
+  with open(os.path.join(db_path, 'processed_data', f'{record_name}.json'), 'r') as f:
+    data = json.load(f)
+    macStTime = datetime.strptime(data['MacStTime'].split()[1], '%H:%M:%S')
+    macEndTime = datetime.strptime(data['MacEndTime'].split()[1], '%H:%M:%S')
+    chamEvents = data['ChamEvents_in_s']
+    if isinstance(chamEvents, dict):
+      chamEvents['END'] = (macEndTime - macStTime).total_seconds()
+      chamEvents = sorted(chamEvents.items(), key=lambda x: x[1])
+      intervals = []
+      for i, event in enumerate(chamEvents[:-1]):
+        if event[0].split('_')[0] == chamber:
+          intervals.append((int(event[1] * sample_rate), int(chamEvents[i+1][1] * sample_rate)))
+  return intervals
+
+
+def get_waveform_segments_from_record(
+  db_path, record_name, acc_channels, ecg_channels, chamber, segment_size, 
+  sample_rate, flat_threshold, flat_min_duration, straight_threshold, min_RHC):
+  """
+  Args:
+    db_path (str): SCG-RHC database path.
+    record_name (str): Record name.
+    acc_channels (list[str]): List of ACC channels to include
+    ecg_channels (list[str]): List of ECG channels to include.
+    chamber (str): Chamber waveform to predict.
+    segment_size (int): Number of samples in segment.
+    sample_rate (int): Sample rate (Hz).
+    flat_threshold (float): Amplitude threshold to be considered flat.
+    flat_min_duration (float): Minimum duration (seconds) to be considered flat.
+    straight_threshold (float): R squared threshold to be considered straight line.
+    min_RHC (float): Minimum allowable RHC value.
+
+  Notes:
+    Do not include segments unless they contain all specified channels.
+
+  Returns:
+    segments (list[dict]): Segments with aim of predicting chamber waveform.
+  """
+  segments = []
+  for interval in get_chamber_intervals(db_path, record_name, chamber, sample_rate):
+    acc_signal = get_channels(db_path, record_name, acc_channels, interval[0], interval[1])
+    ecg_signal = get_channels(db_path, record_name, ecg_channels, interval[0], interval[1])
+    rhc_signal = get_channels(db_path, record_name, ['RHC_pressure'], interval[0], interval[1])
+    num_segments = acc_signal.shape[0] // segment_size
+    for i in range(num_segments):
+      start = i * segment_size
+      stop = start + segment_size
+      acc_segment = acc_signal[start:stop]
+      ecg_segment = ecg_signal[start:stop]
+      rhc_segment = rhc_signal[start:stop]
+      if not has_noise(
+        rhc_segment[:, 0], flat_threshold, flat_min_duration, straight_threshold, 
+        min_RHC, sample_rate):
+        segment = {
+          'acc': acc_segment,
+          'rhc': rhc_segment,
+          'record_name': record_name,
+          'start': start,
+          'stop': stop
+        }
+        if ecg_channels:
+          segment['ecg'] = ecg_segment
+        segments.append(segment)
+  return segments
+
+
+def get_waveform_segments(
+  db_path, record_names, acc_channels, ecg_channels, chamber, segment_size,
+  sample_rate, flat_threshold, flat_min_duration, straight_threshold, min_RHC):
+  """
+  Args:
+    db_path (str): SCG-RHC database path.
+    record_names (str): Record names.
+    acc_channels (list[str]): List of ACC channels to include
+    ecg_channels (list[str]): List of ECG channels to include.
+    chamber (str): Chamber waveform to predict.
+    segment_size (int): Number of samples in segment.
+    sample_rate (int): Sample rate (Hz).
+    flat_threshold (float): Amplitude threshold to be considered flat.
+    flat_min_duration (float): Minimum duration (seconds) to be considered flat.
+    straight_threshold (float): R squared threshold to be considered straight line.
+    min_RHC (float): Minimum allowable RHC value.
+
+  Notes:
+    Do not include segments unless they contain all specified channels.
+
+  Returns:
+    segments (list[dict]): Segments with aim of predicting chamber waveform.
+  """
+  segments = []
+  for record_name in record_names:
+    segments.extend(get_waveform_segments_from_record(
+      db_path, record_name, acc_channels, ecg_channels, chamber, segment_size,
+      sample_rate, flat_threshold, flat_min_duration, straight_threshold, min_RHC))
   return segments
 
 
@@ -546,10 +687,11 @@ def get_groups(list_to_split, n):
 
   Returns:
     groups (list[list]): List of lists, where each inner length is a sublist of
-    the original list with a length of n. Groups are created iteratively from
-    left to right. 
+    the original list with a length of n. List is shuffled before splitting. 
+    Groups are created iteratively from left to right. 
   """
   groups = []
+  random.shuffle(list_to_split)
   for i in range(0, len(list_to_split), n):
     group = list_to_split[i:i+n]
     if len(group) == n:
@@ -557,19 +699,32 @@ def get_groups(list_to_split, n):
   return groups
 
 
-def save_dataset(db_path, dataset_dir_path, batch_size, RHC_col, num_tests, segment_size, sample_rate):
+def save_dataset(
+  db_path, dataset_dir_path, outcome_type, batch_size, acc_channels, ecg_channels, 
+  RHC_col, chamber, num_tests, num_folds, segment_size, sample_rate, 
+  flat_threshold, flat_min_duration, straight_threshold, min_RHC):
   """
   Save dataset with given parameters.
 
   Args:
     db_path (str): SCG-RHC database path.
     dataset_dir_path (str): Dataset directory path.
+    outcome_type (str): Indicates type of prediction to perform, 'value' or 'waveform'.
     batch_size (int): Batch size.
-    RHC_col (str): RHC column of interest.
-    num_test (int): Number of patients to include in test set.
+    acc_channels (list[str]): ACC channels to include.
+    ecg_channels (list[str]): ECG channels to include.
+    RHC_col (str): RHC column of interest when performing value prediction.
+    chamber (str): Heart chamber of interest when performing waveform prediction.
+    num_test (int): Number of patients to include in a test set.
+    num_folds (int): Number of folds to create.
     segment_size (float): Segment duration (sec).
     sample_rate (int): Sample rate (Hz).
+    flat_threshold (float): Amplitude threshold to be considered flat.
+    flat_min_duration (float): Minimum duration (seconds) to be considered flat.
+    straight_threshold (float): R squared threshold to be considered straight line.
+    min_RHC (float): Minimum allowable RHC value.
   """
+
   start_time = time()
   timelog(f'Create {dataset_dir_path}', start_time)
 
@@ -579,11 +734,17 @@ def save_dataset(db_path, dataset_dir_path, batch_size, RHC_col, num_tests, segm
   # Convert segment size in sec to number of samples.
   segment_size = int(segment_size * sample_rate)
 
+  # Check outcome type
+  assert outcome_type == 'value' or outcome_type == 'waveform'
+
   # Get all patients and record names that may be included in a test set.
-  _, all_test_records = get_test_codes_and_record_names(db_path)
+  if outcome_type == 'value':
+    _, all_test_records = get_value_test_codes_and_record_names(db_path)
+  elif outcome_type == 'waveform':
+    _, all_test_records = get_waveform_test_codes_and_record_names(db_path)
 
   # Randomly split test records into groups of a given length.
-  test_record_groups = get_groups(all_test_records, num_tests)
+  test_record_groups = get_groups(all_test_records, num_tests)[:num_folds]
 
   # Create different hold out datasets.
   for i, test_records in enumerate(test_record_groups):
@@ -614,9 +775,30 @@ def save_dataset(db_path, dataset_dir_path, batch_size, RHC_col, num_tests, segm
     # Random state for spltiting train and valid segments.
     random_state = random.randint(1, 1000)
 
-    # Get segments.
-    test_segs = get_segments(db_path, test_records, RHC_col, RHC_df, segment_size, sample_rate)
-    nontest_segs = get_segments(db_path, train_records, RHC_col, RHC_df, segment_size, sample_rate)
+    # Get segments for predicting a certain value if indicated.
+    if outcome_type == 'value':
+      
+      test_segs = get_value_segments(
+        db_path, test_records, acc_channels, ecg_channels, 
+        RHC_col, RHC_df, segment_size, sample_rate)
+      
+      nontest_segs = get_value_segments(
+        db_path, train_records, acc_channels, ecg_channels, 
+        RHC_col, RHC_df, segment_size, sample_rate)
+    
+    # Get segments for predicting a certain waveform if indicated.
+    if outcome_type == 'waveform':
+      
+      test_segs = get_waveform_segments(
+        db_path, test_records, acc_channels, ecg_channels, chamber, 
+        segment_size, sample_rate, flat_threshold, flat_min_duration, 
+        straight_threshold, min_RHC)
+      
+      nontest_segs = get_waveform_segments(
+        db_path, train_records, acc_channels, ecg_channels, chamber, 
+        segment_size, sample_rate, flat_threshold, flat_min_duration, 
+        straight_threshold, min_RHC)
+    
     train_segs, valid_segs = train_test_split(nontest_segs, train_size=0.9, random_state=random_state)
 
     # Get datasets.
@@ -669,13 +851,22 @@ def run(dir_path):
     save_dataset(
       DATABASE_PATH,
       dir_path,
+      data['outcome_type'],
       data['batch_size'],
+      data['acc_channels'],
+      data['ecg_channels'],
       data['RHC_col'],
+      data['chamber'],
       data['num_tests'],
+      data['num_folds'],
       data['segment_size'],
-      SAMPLE_RATE
+      SAMPLE_RATE,
+      data['flat_threshold'],
+      data['flat_min_duration'],
+      data['straight_threshold'],
+      data['min_RHC']
     )
-
+ 
 
 if __name__ == '__main__':
   dir_path = sys.argv[1]
