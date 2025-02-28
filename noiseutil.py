@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LinearRegression
 
 def get_flat_lines(waveform, threshold, min_duration, sampling_rate):
@@ -83,8 +84,8 @@ def has_noise(
     has_noise (bool): True if waveform has any noise, else false.
   """
   has_noise = (
-    len(get_flat_lines(waveform)) > 0 or
-    is_straight_line(waveform) or
+    len(get_flat_lines(waveform, flat_threshold, flat_min_duration, sampling_rate)) > 0 or
+    is_straight_line(waveform, straight_threshold) or
     not in_rhc_range(waveform, min_RHC)
   )
   return has_noise
