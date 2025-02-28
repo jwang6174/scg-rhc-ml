@@ -1,0 +1,20 @@
+{
+  "outcome_type": "value",
+  "batch_size": 128,
+  "segment_size": 1.5,
+  "num_tests": 3,
+  "num_folds": 3,
+  "acc_channels": [
+    "patch_ACC_lat",
+    "patch_ACC_dv",
+    "patch_ACC_hf"
+  ],
+  "ecg_channels": [],
+  "RHC_col": "Avg. COmL/min",
+  "chamber": null,
+  "flat_threshold": null,
+  "flat_min_duration": null,
+  "straight_threshold": null,
+  "min_RHC": null
+}
+
