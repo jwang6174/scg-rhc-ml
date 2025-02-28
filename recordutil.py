@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import wfdb
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
 from pathutil import DATABASE_PATH
 from sklearn.model_selection import train_test_split
@@ -22,20 +23,6 @@ from noiseutil import has_noise
 SAMPLE_RATE = 500
 
 
-class Segment:
-  """
-  Signal segment with patch signals, patient attributes, and RHC value.
-  """
-  def __init__(self, acc, ecg, bmi, RHC_val, record_name, start, stop):
-    self.acc = acc
-    self.ecg = ecg
-    self.bmi = bmi
-    self.RHC_val = RHC_val
-    self.record_name = record_name
-    self.start = start
-    self.stop = stop
-
-
 class SCGDataset(Dataset):
 
   def __init__(self, segments, segment_size):
@@ -43,8 +30,8 @@ class SCGDataset(Dataset):
     Container dataset class.
 
     Args:
-      segments (list[Segment]): Segments with patch signals, patient
-      attributes, and RHC value.
+      segments (list[dict]): Segments with patch signals, patient attributes, and 
+      RHC value.
 
       segment_size (int): Number of samples in segment.
     """
@@ -101,12 +88,36 @@ class SCGDataset(Dataset):
   def init_segments(self, segments, segment_size):
     """
     Args:
-      segments (list[Segment]): 
+      segments (list[dict]): List of segments prior to minmax normalization.
+      Note that minmax normalizations is relative to each segment.
+
+      segment_size (int): Number of samples in segment.
+
+    Returns:
+      segments (list[dict]): Segments after inter-segment minmax
+      normalization.
     """
     for segment in segments:
-      segment.acc = self.pad(self.invert(self.minmax_norm(segment.acc)), segment_size)
-      segment.ecg = self.pad(self.invert(self.minmax_norm(segment.ecg)), segment_size)
+      segment['acc'] = self.pad(self.invert(self.minmax_norm(segment['acc'])), segment_size)
+      segment['ecg'] = self.pad(self.invert(self.minmax_norm(segment['ecg'])), segment_size)
     return segments
+
+  def __len__(self):
+    """
+    Returns:
+      (int): Number of segments.
+    """
+    return len(self.segments)
+
+  def __getitem__(self, index):
+    """
+    Args:
+      index (int): Segment index.
+
+    Returns:
+      (dict): Segment at given index.
+    """
+    return self.segments[index]
 
 
 def get_record_names(path):
@@ -244,16 +255,14 @@ def get_channels(db_path, record_name, channel_names, start, stop):
   return channels
 
 
-def get_test_codes_and_record_names(path, num_test):
+def get_test_codes_and_record_names(path):
   """
-  Get patient codes and record names to be included in a test set. To maximize 
-  available training data, test set should only include patients that underwent 
-  1 cath and did not undergo physiologic challenge. Randomly select a certain
-  number of patients (without replacement) meeting these criteria to be included.
+  Get all patient codes and record names that may be included in a test set. To 
+  maximize available training data, test set should only include patients that 
+  underwent 1 cath and did not undergo physiologic challenge.
 
   Args:
     path (str): SCG-RHC database path.
-    num_test (int): Number of patients to include in test.
 
   Returns:
     patient_codes (list[str]): Patient codes in test set.
@@ -261,8 +270,7 @@ def get_test_codes_and_record_names(path, num_test):
   """
   set1 = set(get_record_names_without_challenge(path))
   set2 = set(get_record_names_of_single_caths(path))
-  records_to_consider = list(set1.intersection(set2))
-  record_names = random.sample(records_to_consider, num_test)
+  record_names = list(set1.intersection(set2))
   patient_codes = [get_patient_code(x) for x in record_names]
   return patient_codes, record_names
 
@@ -435,8 +443,8 @@ def get_segments_from_record(db_path, record_name, RHC_df, RHC_col, segment_size
     sample_rate (int): Sample rate.
 
   Returns:
-    segments (list[Segment]): Segments with patch signals, patient
-    attributes, and RHC value.
+    segments (list[dict]): Segments with patch signals, patient
+    attributes, and RHC values.
   """
   
   # Subset RHC df for the given record.
@@ -456,7 +464,7 @@ def get_segments_from_record(db_path, record_name, RHC_df, RHC_col, segment_size
   # Add RHC vals.
   RHC_vals = [] 
   
-  # Add baseline RHC val.
+  # Add baseline RHC vals.
   baseline_RHC = subdf[subdf['RHC Phase'] == 'Baseline']
   if baseline_RHC.shape[0] > 1:
     raise ValueError(f'Multiple baselines found for record {record_name}')
@@ -483,10 +491,13 @@ def get_segments_from_record(db_path, record_name, RHC_df, RHC_col, segment_size
   
   # Add segments.
   segments = []
-  for interval, RHC_val in zip(challenge_intervals, RHC_vals):
+  for interval, RHC in zip(challenge_intervals, RHC_vals):
+    if RHC.isnumeric():
+      RHC = float(RHC)
+    else:
+      continue
     start, stop = interval
-    acc_signal = get_channels(db_path, record_name, 
-      ['patch_ACC_lat', 'patch_ACC_hf', 'patch_ACC_dv'], start, stop)
+    acc_signal = get_channels(db_path, record_name, ['patch_ACC_lat', 'patch_ACC_hf', 'patch_ACC_dv'], start, stop)
     ecg_signal = get_channels(db_path, record_name, ['patch_ECG'], start, stop)
     num_segments = acc_signal.shape[0] // segment_size
     for i in range(num_segments):
@@ -494,15 +505,15 @@ def get_segments_from_record(db_path, record_name, RHC_df, RHC_col, segment_size
       stop = start + segment_size
       acc_segment = acc_signal[start:stop]
       ecg_segment = ecg_signal[start:stop]
-      segment = Segment(
-        acc_segment,
-        ecg_segment,
-        bmi,
-        RHC_val,
-        record_name,
-        start,
-        stop
-      )
+      segment = {
+        'acc': acc_segment,
+        'ecg': ecg_segment,
+        'bmi': bmi,
+        'rhc': RHC,
+        'record_name': record_name,
+        'start': start,
+        'stop': stop
+      }
       segments.append(segment)
   return segments
 
@@ -523,102 +534,128 @@ def get_segments(db_path, record_paths, RHC_col, RHC_df, segment_size, sample_ra
   """
   segments = []
   for record_path in record_paths:
-    segments.extend(get_segments_from_record(
-      db_path, record_path, RHC_df, RHC_col, segment_size, sample_rate))
+    segments.extend(get_segments_from_record(db_path, record_path, RHC_df, RHC_col, segment_size, sample_rate))
   return segments
 
 
-def save_dataset(db_path, dataset_label, batch_size, RHC_col, num_test, segment_size, sample_rate):
+def get_groups(list_to_split, n):
+  """
+  Args:
+    list_to_split (list): The list to split.
+    n (int): Desired length of sublists.
+
+  Returns:
+    groups (list[list]): List of lists, where each inner length is a sublist of
+    the original list with a length of n. Groups are created iteratively from
+    left to right. 
+  """
+  groups = []
+  for i in range(0, len(list_to_split), n):
+    group = list_to_split[i:i+n]
+    if len(group) == n:
+      groups.append(group)
+  return groups
+
+
+def save_dataset(db_path, dataset_dir_path, batch_size, RHC_col, num_tests, segment_size, sample_rate):
   """
   Save dataset with given parameters.
 
   Args:
     db_path (str): SCG-RHC database path.
-    dataset_label (str): Dataset label.
+    dataset_dir_path (str): Dataset directory path.
     batch_size (int): Batch size.
-    RHC_col (str): RHC value of interest.
+    RHC_col (str): RHC column of interest.
     num_test (int): Number of patients to include in test set.
     segment_size (float): Segment duration (sec).
     sample_rate (int): Sample rate (Hz).
   """
-
-  # Create dataset directory.
-  dataset_dir_path = os.path.join('datasets', dataset_label)
-  if not os.path.exists(dataset_dir_path):
-    os.makedirs(dataset_dir_path)
-
-  # Check if train loader already exists.
-  train_loader_path = os.path.join(dataset_dir_path, 'train_loader.pickle')
-  if os.path.exists(train_loader_path):
-    raise FileExistsError(f'File {train_loader_path} already exists!')
-  
-  # Check if valid loader already exists.
-  valid_loader_path = os.path.join(dataset_dir_path, 'valid_loader.pickle')
-  if os.path.exists(valid_loader_path):
-    raise FileExistsError(f'File {valid_loader_path} already exists!')
-
-  # Check if test loader already exists.
-  test_loader_path = os.path.join(dataset_dir_path, 'test_loader.pickle')
-  if os.path.exists(test_loader_path):
-    raise FileExistsError(f'File {test_loader_path} already exists!')
-  
-  # Get test patients and record names.
-  test_patients, test_records = get_test_codes_and_record_names(db_path, num_test)
-
-  # Get train patients and record names.
-  train_patients, train_records = get_train_codes_and_record_names(db_path, test_records)
-
-  # Random state for spltiting train and valid segments.
-  random_state = random.randint(1, 1000)
+  start_time = time()
+  timelog(f'Create {dataset_dir_path}', start_time)
 
   # Load RHC dataframe.
-  RHC_df = pd.read_csv(os.path.join(db_path, 'meta_information', 'RHC_values.csv')) 
+  RHC_df = pd.read_csv(os.path.join(db_path, 'meta_information', 'RHC_values.csv'))
 
   # Convert segment size in sec to number of samples.
   segment_size = int(segment_size * sample_rate)
 
-  # Get segments.
-  test_segs = get_segments(db_path, test_records, RHC_col, RHC_df, segment_size, sample_rate)
-  nontest_segs = get_segments(db_path, train_records, RHC_col, RHC_df, segment_size, sample_rate)
-  train_segs, valid_segs = train_test_split(nontest_segs, train_size=0.9, random_state=random_state)
+  # Get all patients and record names that may be included in a test set.
+  _, all_test_records = get_test_codes_and_record_names(db_path)
 
-  # Get datasets.
-  train_set = SCGDataset(train_segs, segment_size)
-  valid_set = SCGDataset(valid_segs, segment_size)
-  test_set = SCGDataset(test_segs, segment_size)
+  # Randomly split test records into groups of a given length.
+  test_record_groups = get_groups(all_test_records, num_tests)
 
-  # Get data loaders.
-  train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-  valid_loader = DataLoader(valid_set, batch_size=1, shuffle=True)
-  test_loader = DataLoader(test_set, batch_size=1, shuffle=True)
-  
-  # Save train data loader.
-  with open(train_loader_path, 'wb') as f:
-    pickle.dump(train_loader, f)
+  # Create different hold out datasets.
+  for i, test_records in enumerate(test_record_groups):
 
-  # Save valid data loader.
-  with open(valid_loader_path, 'wb') as f:
-    pickle.dump(valid_loader, f)
+    timelog(f'Create fold {i+1}/{len(test_record_groups)}', start_time)
+    
+    # Check if train loader already exists.
+    train_loader_path = os.path.join(dataset_dir_path, f'{i+1}_train_loader.pkl')
+    if os.path.exists(train_loader_path):
+      raise FileExistsError(f'File {train_loader_path} already exists!')
 
-  # Save test data loader.
-  with open(test_loader_path, 'wb') as f:
-    pickle.dump(test_loader, f)
+    # Check if valid loader already exists.
+    valid_loader_path = os.path.join(dataset_dir_path, f'{i+1}_valid_loader.pkl')
+    if os.path.exists(valid_loader_path):
+      raise FileExistsError(f'File {valid_loader_path} already exists!')
 
-  # Save record log.
-  record_log_path = os.path.join('datasets', dataset_label, 'record_log.json')
-  with open(record_log_path, 'w') as f:
-    f.write(
-      json.dumps({
-        'test_patients': test_patients,
-        'test_records': test_records,
-        'train_patients': train_patients,
-        'train_records': train_records,
-        'random_state': random_state,
-        'train segments': len(train_segs),
-        'valid segments': len(valid_segs),
-        'test_segments': len(test_segs)
-      }, indent=4)
-    )
+    # Check if test loader already exists.
+    test_loader_path = os.path.join(dataset_dir_path, f'{i+1}_test_loader.pkl')
+    if os.path.exists(test_loader_path):
+      raise FileExistsError(f'File {test_loader_path} already exists!')
+    
+    # Get test patient codes.
+    test_patients = [get_patient_code(i) for i in test_records]
+
+    # Get train patients and record names.
+    train_patients, train_records = get_train_codes_and_record_names(db_path, test_records)
+
+    # Random state for spltiting train and valid segments.
+    random_state = random.randint(1, 1000)
+
+    # Get segments.
+    test_segs = get_segments(db_path, test_records, RHC_col, RHC_df, segment_size, sample_rate)
+    nontest_segs = get_segments(db_path, train_records, RHC_col, RHC_df, segment_size, sample_rate)
+    train_segs, valid_segs = train_test_split(nontest_segs, train_size=0.9, random_state=random_state)
+
+    # Get datasets.
+    train_set = SCGDataset(train_segs, segment_size)
+    valid_set = SCGDataset(valid_segs, segment_size)
+    test_set = SCGDataset(test_segs, segment_size)
+
+    # Get data loaders.
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_set, batch_size=1, shuffle=True)
+    test_loader = DataLoader(test_set, batch_size=1, shuffle=True)
+
+    # Save train data loader.
+    with open(train_loader_path, 'wb') as f:
+      pickle.dump(train_loader, f)
+
+    # Save valid data loader.
+    with open(valid_loader_path, 'wb') as f:
+      pickle.dump(valid_loader, f)
+
+    # Save test data loader.
+    with open(test_loader_path, 'wb') as f:
+      pickle.dump(test_loader, f)
+
+    # Save record log.
+    record_log_path = os.path.join(dataset_dir_path, f'{i+1}_record_log.json')
+    with open(record_log_path, 'w') as f:
+      f.write(
+        json.dumps({
+          'test_patients': test_patients,
+          'test_records': test_records,
+          'train_patients': train_patients,
+          'train_records': train_records,
+          'random_state': random_state,
+          'train segments': len(train_segs),
+          'valid segments': len(valid_segs),
+          'test_segments': len(test_segs)
+        }, indent=4)
+      )
 
 
 def run(dir_path):
@@ -626,16 +663,15 @@ def run(dir_path):
   Args:
     dir_path (str): Project directory path.
   """
-  with open(os.path.join(dir_path, 'params.json'), 'r') as f:
+  filepath = os.path.join(dir_path, 'params.json')
+  with open(filepath, 'r') as f:
     data = json.load(f)
-    start_time = time()
-    timelog(f"Create dataset for {data['dataset_label']}", start_time)
     save_dataset(
       DATABASE_PATH,
-      data['dataset_label'],
+      dir_path,
       data['batch_size'],
       data['RHC_col'],
-      data['num_test'],
+      data['num_tests'],
       data['segment_size'],
       SAMPLE_RATE
     )
