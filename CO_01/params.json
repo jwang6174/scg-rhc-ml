@@ -1,8 +1,0 @@
-{
-  "dir_path": "CO_01",
-  "dataset_label": "CO_01",
-  "batch_size": 16,
-  "RHC_col": "Avg. COmL/min",
-  "num_test": 5,
-  "segment_size": 1.5
-}
