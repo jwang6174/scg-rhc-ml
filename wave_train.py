@@ -295,8 +295,8 @@ def get_last_checkpoint_path(dirpath):
     return None
 
 
-def run(model_name, dataset_name, num_in_channels, segment_size, alpha, 
-        batch_size, beta1, beta2, n_critic, lambda_gp, lambda_aux, total_epochs):
+def run(model_name, dataset_name, dataset_fold, num_in_channels, segment_size, 
+        alpha, batch_size, beta1, beta2, n_critic, lambda_gp, lambda_aux, total_epochs):
   
   # Create checkpoint directory path if not exists.
   checkpoint_dir_path = os.path.join('models', model_name, 'checkpoints')
@@ -304,7 +304,8 @@ def run(model_name, dataset_name, num_in_channels, segment_size, alpha,
     os.makedirs(checkpoint_dir_path)
 
   # Get train data loader.
-  train_segments_path = os.path.join('datasets', dataset_name, 'train_segments.pkl')
+  train_segments_path = os.path.join('datasets', dataset_name, 
+                                    f'train_segments_{dataset_fold}.pkl')
   with open(train_segments_path, 'rb') as f:
     train_segments = pickle.load(f)
     train_loader = get_loader(train_segments, segment_size, batch_size)
@@ -373,14 +374,14 @@ def run(model_name, dataset_name, num_in_channels, segment_size, alpha,
 
       # Create plot of losses.
       if i % 10 == 0 or i == len(train_loader) - 1:
-        timelog(f'train_wave.py | {model_name} | epoch {epoch+1}/{total_epochs} | batch {i}/{len(train_loader)}', start_time)
+        timelog(f'wave_train.py | {model_name} | epoch {epoch+1}/{total_epochs} | batch {i}/{len(train_loader)}', start_time)
         train_losses_path = os.path.join('models', model_name, 'train_losses.png')
         plt.plot(g_losses, label='G loss')
         plt.plot(d_losses, label='D loss')
         plt.title(f'Epoch {epoch+1}/{total_epochs} | Batch {i}/{len(train_loader)}')
         plt.xlabel('Iteration')
         plt.ylabel('Loss')
-        plt.ylim(0, 100)
+        plt.ylim(0, 30)
         plt.legend()
         plt.savefig(train_losses_path)
         plt.close()
@@ -409,7 +410,7 @@ if __name__ == '__main__':
   with open(model_path, 'r') as f:
     model_params = json.load(f)
 
-  dataset_name = model_params['dataset']
+  dataset_name = model_params['dataset_name']
   dataset_path = os.path.join('datasets', dataset_name, 'params.json')
   with open(dataset_path, 'r') as f:
     dataset_params = json.load(f)
@@ -417,6 +418,7 @@ if __name__ == '__main__':
   run(
     model_name,
     dataset_name,
+    model_params['dataset_fold'],
     len(dataset_params['acc_channels']),
     dataset_params['segment_size'] * SAMPLE_RATE,
     model_params['alpha'],

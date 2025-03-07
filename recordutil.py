@@ -2,6 +2,7 @@ import json
 import numpy as np
 import os
 import pickle
+import random
 import sys
 import wfdb
 from datetime import datetime
@@ -9,7 +10,6 @@ from pathlib import Path
 from pathutil import DATABASE_PATH
 from sklearn.model_selection import train_test_split
 from noiseutil import has_noise
-
 
 # Waveform sample rate.
 SAMPLE_RATE = 500
@@ -138,6 +138,150 @@ def get_channels(record_name, channel_names, start, stop, db_path):
   return channels
 
 
+def get_patient_code(record_name):
+  """
+  Args:
+    record_name (str): Record name that includes patient code.
+
+  Returns:
+    code (str): Patient code.
+  """
+  code = record_name.split('-')[0]
+  return code
+
+
+def get_record_names_with_challenge(db_path):
+  """
+  Args:
+    db_path (str): SCG-RHC database path.
+
+  Returns:
+    with_challenge (list[str]): Record names with physiologic challenge 
+    (eg, nitro, dobutamine, fluids, leg raise, etc).
+  """
+  with_challenge = []
+  for name in get_record_names(db_path):
+    with open(os.path.join(db_path, 'processed_data', f'{name}.json'), 'r') as f:
+      data = json.load(f)
+      if data['IsChallenge'] == 1:
+        with_challenge.append(name)
+  return with_challenge
+
+
+
+def get_record_names_without_challenge(db_path):
+  """
+  Args:
+    db_path (str): SCG-RHC database path.
+
+  Returns:
+    no_challenge (list[str]): Record names without physiologic challenge.
+  """
+  all_names = get_record_names(db_path)
+  with_challenge = get_record_names_with_challenge(db_path)
+  no_challenge = sorted(list(set(all_names) - set(with_challenge)))
+  return no_challenge
+
+
+def get_record_names_of_multiple_caths(db_path):
+  """
+  Args:
+    db_path (str): SCG-RHC database path.
+
+  Returns:
+    multi (list[str]): Record names of multiple caths.
+  """
+  multi = []
+  counts = {}
+  record_names = get_record_names(db_path)
+  
+  # Get record count for each patient.
+  for name in record_names:
+    code = get_patient_code(name)
+    counts[code] = counts.get(code, 0) + 1
+
+  # Get record names with multiple caths.
+  for name in record_names:
+    code = get_patient_code(name)
+    if counts[code] > 1:
+      multi.append(name)
+
+  return multi
+
+
+def get_record_names_of_single_caths(db_path):
+  """
+  Args:
+    db_path (str): SCG-RHC database path.
+
+  Returns:
+    single (list[str]): Record names of only one cath.
+  """
+  single = []
+  all_names = get_record_names(db_path)
+  multi_names = get_record_names_of_multiple_caths(db_path)
+  single = sorted(list(set(all_names) - set(multi_names)))
+  return single
+
+
+def get_groups(list_to_split, n):
+  """
+  Args:
+    list_to_split (list): The list to split.
+    n (int): Desired length of sublists.
+
+  Returns:
+    groups (list[list]): List of lists, where each inner length is a sublist of
+    the original list with a length of n. List is shuffled before splitting. 
+    Groups are created iteratively from left to right. 
+  """
+  groups = []
+  random.shuffle(list_to_split)
+  for i in range(0, len(list_to_split), n):
+    group = list_to_split[i:i+n]
+    if len(group) == n:
+      groups.append(group)
+  return groups
+
+
+def get_test_record_names(db_path):
+  """
+  Identify record names without challenge and with patients who underwent
+  only a single catheterization. These are potential records that may be used
+  in a test set. The goal is for the model to evaluate tracings from patients
+  it has not seen before. If challenge and multiple catheterizations were
+  included, then then would be the possibility of a patient being included
+  in both training and test sets.
+
+  Args:
+    path (str): SCG-RHC database path.
+
+  Returns:
+    record_names (list[str]): Record names in test set.
+  """
+  set1 = set(get_record_names_without_challenge(db_path))
+  set2 = set(get_record_names_of_single_caths(db_path))
+  record_names = list(set1.intersection(set2))
+  return record_names
+
+
+def get_train_record_names(test_record_names, db_path):
+  """
+  Get patient codes and record names to be included in a train set by subtracting
+  test record names from all record names.
+
+  Args:
+    test_record_names (list[str]):  Record names in test set.
+    db_path (str): SCG-RHC database path.
+
+  Returns:
+    record_names (list[str]): Record names in train set.
+  """
+  record_names = sorted(list(set(get_record_names(db_path)) - set(test_record_names)))
+  return record_names
+
+
+
 def get_record_segments(record_name, acc_channels, chamber, segment_size, 
                         flat_amp_threshold, flat_min_duration, straight_threshold, 
                         min_RHC, max_RHC, db_path, sample_rate):
@@ -184,11 +328,12 @@ def get_record_segments(record_name, acc_channels, chamber, segment_size,
   return record_segments
 
 
-def get_dataset_segments(acc_channels, chamber, segment_size, flat_amp_threshold, 
-                         flat_min_duration, straight_threshold, min_RHC, max_RHC,
-                         db_path, sample_rate):
+def get_dataset_segments(record_names, acc_channels, chamber, segment_size, 
+                         flat_amp_threshold, flat_min_duration, straight_threshold, 
+                         min_RHC, max_RHC, db_path, sample_rate):
   """
   Args:
+    record_names (list[str]): Names of records to get segments from.
     acc_channels (list[str]): List of ACC channels to include
     chamber (str): Chamber waveform to predict.
     segment_size (int): Number of samples in segment.
@@ -204,7 +349,7 @@ def get_dataset_segments(acc_channels, chamber, segment_size, flat_amp_threshold
     dataset_segments (list[dict]): Dataset segments.
   """
   dataset_segments = []
-  for record_name in get_record_names(db_path):
+  for record_name in record_names:
     record_segments = get_record_segments(record_name, acc_channels, chamber, 
                                           segment_size, flat_amp_threshold, 
                                           flat_min_duration, straight_threshold, 
@@ -214,7 +359,7 @@ def get_dataset_segments(acc_channels, chamber, segment_size, flat_amp_threshold
 
 
 def save_dataset(dataset_name, acc_channels, chamber, segment_size, 
-                 train_size, flat_amp_threshold, flat_min_duration, 
+                 num_tests, num_folds, flat_amp_threshold, flat_min_duration, 
                  straight_threshold, min_RHC, max_RHC, db_path, sample_rate):
   """
   Save list of train, validation, and test segments as pickle files.
@@ -223,10 +368,10 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
     dataset_name (str): Dataset name.
     batch_size (int): Batch size.
     acc_channels (list[str]): ACC channels.
-    RHC_col (str): RHC column of interest when performing value prediction.
     chamber (str): Heart chamber of interest when performing waveform prediction.
     segment_size (float): Segment duration (sec).
-    train_size (float): Percentage of segments that should be used for training.
+    num_tests (int): Number of records in test set.
+    num_folds (int): Number of test folds.
     flat_amp_threshold (float): Amplitude threshold to be considered flat.
     flat_min_duration (float): Minimum duration (seconds) to be considered flat.
     straight_threshold (float): R squared threshold to be considered straight line.
@@ -236,40 +381,61 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
     sample_rate (int): Sample rate (Hz).
   """
   print(f'Run recordutil.py for {dataset_name}')
-  
-  dataset_segments = get_dataset_segments(acc_channels, chamber, segment_size,
-                                          flat_amp_threshold, flat_min_duration, 
-                                          straight_threshold, min_RHC, max_RHC,
-                                          db_path, sample_rate)
-  
-  train_segments, non_train_segments = train_test_split(dataset_segments,
-                                                        shuffle=True,
-                                                        train_size=train_size)
-  
-  valid_segments, test_segments = train_test_split(non_train_segments, 
-                                                   shuffle=True,
-                                                   train_size=0.5)
+
+  # Get names of all records that may be included in a test set.
+  all_test_records = get_test_record_names(db_path)
+
+  # Randomly split test records into groups of a given length.
+  test_record_groups = get_groups(all_test_records, num_tests)[:num_folds]
+
+  # Create different hold out sets.
+  for i, test_records in enumerate(test_record_groups):
+    print(f'Create fold {i+1}/{num_folds}')
+
+    # Identify training records by subtracting test records from all records.
+    train_records = get_train_record_names(test_records, db_path)
+
+    # Get training segments.
+    train_segments = get_dataset_segments(train_records, acc_channels, chamber, 
+                                          segment_size, flat_amp_threshold, 
+                                          flat_min_duration, straight_threshold, 
+                                          min_RHC, max_RHC, db_path, sample_rate)
+
+    # Subset random portion of training segments for validation.
+    train_segments, valid_segments = train_test_split(train_segments,
+                                                      train_size=0.95,
+                                                      shuffle=True)
+
+    # Get test segments.
+    test_segments = get_dataset_segments(test_records, acc_channels, chamber, 
+                                         segment_size, flat_amp_threshold, 
+                                         flat_min_duration, straight_threshold, 
+                                         min_RHC, max_RHC, db_path, sample_rate)
     
-  train_path = os.path.join('datasets', dataset_name, 'train_segments.pkl')
-  with open(train_path, 'wb') as f:
-    pickle.dump(train_segments, f)
+    # Save train segments.
+    train_path = os.path.join('datasets', dataset_name, f'train_segments_{i+1}.pkl')
+    with open(train_path, 'wb') as f:
+      pickle.dump(train_segments, f)
 
-  valid_path = os.path.join('datasets', dataset_name, 'valid_segments.pkl')
-  with open(valid_path, 'wb') as f:
-    pickle.dump(valid_segments, f)
+    # Save valid segments.
+    valid_path = os.path.join('datasets', dataset_name, f'valid_segments_{i+1}.pkl')
+    with open(valid_path, 'wb') as f:
+      pickle.dump(valid_segments, f)
 
-  test_path = os.path.join('datasets', dataset_name, 'test_segments.pkl')
-  with open(test_path, 'wb') as f:
-    pickle.dump(test_segments, f)
+    # Save test segments.
+    test_path = os.path.join('datasets', dataset_name, f'test_segments_{i+1}.pkl')
+    with open(test_path, 'wb') as f:
+      pickle.dump(test_segments, f)
 
-  log_path = os.path.join('datasets', dataset_name, 'segment_info.txt')
-  with open(log_path, 'w') as f:
-    json_str = json.dumps({
-      'train_segments': len(train_segments),
-      'valid_segments': len(valid_segments),
-      'test_segments': len(test_segments),
-    }, indent=4)
-    f.write(json_str)
+    # Save segment info.
+    log_path = os.path.join('datasets', dataset_name, f'segment_info_{i+1}.txt')
+    with open(log_path, 'w') as f:
+      json_str = json.dumps({
+        'train_segments': len(train_segments),
+        'valid_segments': len(valid_segments),
+        'test_segments': len(test_segments),
+      }, indent=4)
+      f.write(json_str)
 
 
 if __name__ == '__main__':
@@ -282,7 +448,8 @@ if __name__ == '__main__':
       params['acc_channels'],
       params['chamber'],
       params['segment_size'],
-      params['train_size'],
+      params['num_tests'],
+      params['num_folds'],
       params['flat_amp_threshold'],
       params['flat_min_duration'],
       params['straight_threshold'],
