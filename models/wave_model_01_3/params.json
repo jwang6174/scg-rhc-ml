@@ -1,0 +1,13 @@
+{
+  "dataset_name": "wave_data_01",
+  "dataset_fold": "3",
+  "alpha": 0.0002,
+  "batch_size": 32,
+  "beta1": 0.5,
+  "beta2": 0.999,
+  "n_critic": 2,
+  "lambda_gp": 10,
+  "lambda_aux": 100,
+  "total_epochs": 100
+}
+

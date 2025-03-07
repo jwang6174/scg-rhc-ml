@@ -1,0 +1,12 @@
+{
+  "acc_channels": ["patch_ACC_lat", "patch_ACC_hf", "patch_ACC_dv"],
+  "chamber": "PA",
+  "segment_size": 1.5,
+  "num_tests": 5,
+  "num_folds": 3,
+  "flat_amp_threshold": 0.01,
+  "flat_min_duration": 0.25,
+  "straight_threshold": 0.8,
+  "min_RHC": 5,
+  "max_RHC": 200
+}
