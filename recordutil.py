@@ -244,6 +244,37 @@ def get_groups(list_to_split, n):
   return groups
 
 
+def get_global_stats(segments, signal_names):
+  """
+  Calculate some stats for a specific signal type, including mean, standard 
+  deviation, min, and max.
+
+  Args:
+    segments (list[dict]): Segments of interest.
+    signal_names (list[str]): Names of signals of interest.
+  
+  Returns:
+    stats (dict): Different stats for each signal type.
+  """
+  joined = {}
+  for segment in segments:
+    for signal_name in signal_names:
+      signal = segment.get(signal_name)
+      if signal is not None:
+        joined[signal_name] = signal
+      else:
+        joined[signal_name] = np.hstack((joined[signal_name], signal))
+
+  stats = {}
+  for signal_name, joined_segment in joined.items():
+    stats[f'{signal_name}_avg'] = np.mean(joined_segment)
+    stats[f'{signal_name}_std'] = np.std(joined_segment)
+    stats[f'{signal_name}_max'] = np.max(joined_segment)
+    stats[f'{signal_name}_min'] = np.min(joined_segment)
+
+  return stats
+
+
 def get_test_record_names(db_path):
   """
   Identify record names without challenge and with patients who underwent
@@ -401,17 +432,25 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
                                           flat_min_duration, straight_threshold, 
                                           min_RHC, max_RHC, db_path, sample_rate)
 
-    # Subset random portion of training segments for validation.
-    train_segments, valid_segments = train_test_split(train_segments,
-                                                      train_size=0.95,
-                                                      shuffle=True)
-
     # Get test segments.
     test_segments = get_dataset_segments(test_records, acc_channels, chamber, 
                                          segment_size, flat_amp_threshold, 
                                          flat_min_duration, straight_threshold, 
                                          min_RHC, max_RHC, db_path, sample_rate)
-    
+
+    # Calculate global stats for each signal across all segments and save 
+    # to file. To be used for feature normalization during training.
+    all_segments = train_segments + test_segments
+    global_stats = get_global_stats(all_segments, ['acc', 'rhc'])
+    global_stats_path = os.path.join('datasets', dataset_name, f'global_stats_{i+1}.json')
+    with open(global_stats_path, 'w') as f:
+      json.dump(global_stats, f, indent=2)
+
+    # Subset random portion of training segments for validation.
+    train_segments, valid_segments = train_test_split(train_segments,
+                                                      train_size=0.95,
+                                                      shuffle=True)
+  
     # Save train segments.
     train_path = os.path.join('datasets', dataset_name, f'train_segments_{i+1}.pkl')
     with open(train_path, 'wb') as f:
@@ -428,7 +467,7 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
       pickle.dump(test_segments, f)
 
     # Save segment info.
-    log_path = os.path.join('datasets', dataset_name, f'segment_info_{i+1}.txt')
+    log_path = os.path.join('datasets', dataset_name, f'segment_info_{i+1}.json')
     with open(log_path, 'w') as f:
       json_str = json.dumps({
         'train_segments': len(train_segments),

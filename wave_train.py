@@ -295,20 +295,27 @@ def get_last_checkpoint_path(dirpath):
     return None
 
 
-def run(model_name, dataset_name, dataset_fold, num_in_channels, segment_size, 
-        alpha, batch_size, beta1, beta2, n_critic, lambda_gp, lambda_aux, total_epochs):
+def train(model_name, dataset_name, dataset_fold, num_in_channels, segment_size, 
+          alpha, batch_size, beta1, beta2, n_critic, lambda_gp, lambda_aux, total_epochs):
   
   # Create checkpoint directory path if not exists.
   checkpoint_dir_path = os.path.join('models', model_name, 'checkpoints')
   if not os.path.exists(checkpoint_dir_path):
     os.makedirs(checkpoint_dir_path)
 
+  # Get global stats.
+  global_stats_path = os.path.join('datasets', dataset_name, 
+                                   f'global_stats_{dataset_fold}.json')
+  with open(global_stats_path, 'r') as f:
+    global_stats = json.load(f)
+
   # Get train data loader.
   train_segments_path = os.path.join('datasets', dataset_name, 
                                     f'train_segments_{dataset_fold}.pkl')
+
   with open(train_segments_path, 'rb') as f:
     train_segments = pickle.load(f)
-    train_loader = get_loader(train_segments, segment_size, batch_size)
+    train_loader = get_loader(train_segments, segment_size, batch_size, global_stats)
 
   # Initialize GAN network.
   generator = Generator(num_in_channels)
@@ -381,7 +388,7 @@ def run(model_name, dataset_name, dataset_fold, num_in_channels, segment_size,
         plt.title(f'Epoch {epoch+1}/{total_epochs} | Batch {i}/{len(train_loader)}')
         plt.xlabel('Iteration')
         plt.ylabel('Loss')
-        plt.ylim(0, 30)
+        plt.ylim(0, 500)
         plt.legend()
         plt.savefig(train_losses_path)
         plt.close()
@@ -403,9 +410,15 @@ def run(model_name, dataset_name, dataset_fold, num_in_channels, segment_size,
     torch.save(checkpoint, os.path.join(checkpoint_dir_path, f'{epoch:03d}.chk'))
 
     epoch += 1
+ 
 
-if __name__ == '__main__':
-  model_name = sys.argv[1]
+def run(model_name):
+  """
+  Perform training on given model.
+
+  Args:
+    model_name (str): Model name.
+  """
   model_path = os.path.join('models', model_name, 'params.json')
   with open(model_path, 'r') as f:
     model_params = json.load(f)
@@ -415,7 +428,7 @@ if __name__ == '__main__':
   with open(dataset_path, 'r') as f:
     dataset_params = json.load(f)
 
-  run(
+  train(
     model_name,
     dataset_name,
     model_params['dataset_fold'],
@@ -430,3 +443,8 @@ if __name__ == '__main__':
     model_params['lambda_aux'],
     model_params['total_epochs'],
   )
+
+
+if __name__ == '__main__':
+  model_name = sys.argv[1]
+  run(model_name)
