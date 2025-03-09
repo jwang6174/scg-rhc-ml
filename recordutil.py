@@ -275,6 +275,23 @@ def get_global_stats(segments, signal_names):
   return stats
 
 
+def add_local_stats(segments, signal_names):
+  """
+  Calculate local stats include min and max for all segments.
+
+  Args:
+    segments (list[dict]): All segments.
+    signal_names (list[str]): Signal names to calculate local stats for.
+  """
+  for segment in segments:
+    for name in signal_names:
+      signal = segment[name]
+      min = np.min(signal)
+      max = np.max(signal)
+      segment[f'{name}_min'] = min
+      segment[f'{name}_max'] = max
+
+
 def get_test_record_names(db_path):
   """
   Identify record names without challenge and with patients who underwent
@@ -413,6 +430,9 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
   """
   print(f'Run recordutil.py for {dataset_name}')
 
+  # Define signal names.
+  signal_names = ['acc', 'rhc']
+
   # Get names of all records that may be included in a test set.
   all_test_records = get_test_record_names(db_path)
 
@@ -441,10 +461,13 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
     # Calculate global stats for each signal across all segments and save 
     # to file. To be used for feature normalization during training.
     all_segments = train_segments + test_segments
-    global_stats = get_global_stats(all_segments, ['acc', 'rhc'])
+    global_stats = get_global_stats(all_segments, signal_names)
     global_stats_path = os.path.join('datasets', dataset_name, f'global_stats_{i+1}.json')
     with open(global_stats_path, 'w') as f:
       json.dump(global_stats, f, indent=2)
+
+    # Add local stats to all segments.
+    add_local_stats(all_segments, signal_names)
 
     # Subset random portion of training segments for validation.
     train_segments, valid_segments = train_test_split(train_segments,

@@ -66,18 +66,20 @@ class SCGDataset(Dataset):
     signal = (signal - signal_avg) / signal_std
     return signal
 
-  def minmax_local(self, signal):
+  def minmax_local(self, signal, signal_min, signal_max):
     """
     Args:
       signal (ndarray): An (MxN) 2d numpy array, where M is the signal length and
       N is the number of channels.
 
+      signal_min (float): Local min value.
+
+      signal_max (float): Local max value.
+
     Returns:
-      signal (ndarary): Minmax normalized signal with respective to this segment.
+      signal (ndarray): Minmax normalized signal with respective to this segment.
     """
-    min = np.min(signal)
-    max = np.max(signal)
-    signal = (signal - min) / (max - min)
+    signal = (signal - signal_min) / (signal_max - signal_min)
     return signal
 
   def init_segments(self, segments, segment_size, stats, norm_type):
@@ -99,8 +101,8 @@ class SCGDataset(Dataset):
     """
     for segment in segments:
       if norm_type == 'minmax_local':
-        acc = self.minmax_local(segment['acc'])
-        rhc = self.minmax_local(segment['rhc'])
+        acc = self.minmax_local(segment['acc'], segment['acc_min'], segment['acc_max'])
+        rhc = self.minmax_local(segment['rhc'], segment['rhc_min'], segment['rhc_max'])
       elif norm_type == 'z_score_global':
         acc = self.z_score_global(segment['acc'], stats['acc_avg'], stats['acc_std'])
         rhc = self.z_score_global(segment['rhc'], stats['rhc_avg'], stats['rhc_std'])
