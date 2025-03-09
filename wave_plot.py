@@ -6,7 +6,7 @@ import sys
 import torch
 from loaderutil import get_loader, SCGDataset
 from recordutil import SAMPLE_RATE
-from train_wave import Generator
+from wave_train import Generator
 
 def save_rand_RHC_plots(model_name, checkpoint_name, dataset_type, num_plots, 
                         sample_rate):
@@ -26,10 +26,20 @@ def save_rand_RHC_plots(model_name, checkpoint_name, dataset_type, num_plots,
   with open(model_path, 'r') as f:
     model_params = json.load(f)
 
+  # Get dataset name andn fold.
+  dataset_name = model_params['dataset_name']
+  dataset_fold = model_params['dataset_fold']
+
   # Get dataset params.
-  dataset_path = os.path.join('datasets', model_params['dataset'], 'params.json')
+  dataset_path = os.path.join('datasets', dataset_name, 'params.json')
   with open(dataset_path, 'r') as f:
     dataset_params = json.load(f)
+
+  # Get segments.
+  segments_name = f'valid_segments_{dataset_fold}.pkl'
+  segments_path = os.path.join('datasets', dataset_name, segments_name)
+  with open(segments_path, 'rb') as f:
+    segments = pickle.load(f)
 
   # Create plots directory if not exists.
   plots_dir_path = os.path.join('models', model_name, 'plots')
@@ -38,17 +48,22 @@ def save_rand_RHC_plots(model_name, checkpoint_name, dataset_type, num_plots,
 
   # Get model checkpoint.
   checkpoint_path = os.path.join('models', model_name, 'checkpoints', 
-                                f'{checkpoint_name}.chk')
+                                 f'{checkpoint_name}.chk')
   checkpoint = torch.load(checkpoint_path, weights_only=False)
 
+  # Get global stats.
+  stats_name = f'global_stats_{dataset_fold}.json'
+  stats_path = os.path.join('datasets', dataset_name, stats_name)
+  with open(stats_path, 'r') as f:
+    global_stats = json.load(f)
+
   # Get data loader.
-  segments_name = f'{dataset_type}_segments.pkl'
-  segments_path = os.path.join('datasets', model_params['dataset'], segments_name)
   with open(segments_path, 'rb') as f:
     segments = pickle.load(f)
     loader = get_loader(segments, 
                         dataset_params['segment_size'] * sample_rate, 
-                        model_params['batch_size'])
+                        model_params['batch_size'],
+                        global_stats)
 
   # Get generator.
   num_in_channels = len(dataset_params['acc_channels'])
