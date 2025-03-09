@@ -1,5 +1,5 @@
 {
-  "acc_channels": ["patch_ACC_lat", "patch_ACC_hf", "patch_ACC_dv"],
+  "acc_channels": ["patch_ACC_lat", "patch_ACC_hf"],
   "chamber": "PA",
   "segment_size": 1.5,
   "num_tests": 5,
