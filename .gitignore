@@ -213,3 +213,4 @@ GitHub.sublime-settings
 *.chk
 *.txt
 *.out
+wave_pipe.py
