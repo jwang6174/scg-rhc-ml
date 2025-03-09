@@ -477,8 +477,13 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
       f.write(json_str)
 
 
-if __name__ == '__main__':
-  dataset_name = sys.argv[1]
+def run(dataset_name):
+  """
+  Run recordutil.py for given dataset.
+
+  Args:
+    dataset_name (str): Dataset name.
+  """
   dataset_params_path = os.path.join('datasets', dataset_name, 'params.json')
   with open(dataset_params_path, 'r') as f:
     params = json.load(f)
@@ -497,3 +502,8 @@ if __name__ == '__main__':
       DATABASE_PATH,
       SAMPLE_RATE
     )
+
+
+if __name__ == '__main__':
+  dataset_name = sys.argv[1]
+  run(dataset_name)
