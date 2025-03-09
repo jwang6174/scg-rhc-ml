@@ -296,7 +296,8 @@ def get_last_checkpoint_path(dirpath):
 
 
 def train(model_name, dataset_name, dataset_fold, num_in_channels, segment_size, 
-          alpha, batch_size, beta1, beta2, n_critic, lambda_gp, lambda_aux, total_epochs):
+          alpha, batch_size, norm_type, beta1, beta2, n_critic, lambda_gp, lambda_aux, 
+          total_epochs):
   
   # Create checkpoint directory path if not exists.
   checkpoint_dir_path = os.path.join('models', model_name, 'checkpoints')
@@ -315,7 +316,8 @@ def train(model_name, dataset_name, dataset_fold, num_in_channels, segment_size,
 
   with open(train_segments_path, 'rb') as f:
     train_segments = pickle.load(f)
-    train_loader = get_loader(train_segments, segment_size, batch_size, global_stats)
+    train_loader = get_loader(train_segments, segment_size, batch_size, 
+                              global_stats, norm_type)
 
   # Initialize GAN network.
   generator = Generator(num_in_channels)
@@ -388,7 +390,7 @@ def train(model_name, dataset_name, dataset_fold, num_in_channels, segment_size,
         plt.title(f'Epoch {epoch+1}/{total_epochs} | Batch {i}/{len(train_loader)}')
         plt.xlabel('Iteration')
         plt.ylabel('Loss')
-        plt.ylim(0, 500)
+        plt.ylim(0, 10)
         plt.legend()
         plt.savefig(train_losses_path)
         plt.close()
@@ -436,6 +438,7 @@ def run(model_name):
     dataset_params['segment_size'] * SAMPLE_RATE,
     model_params['alpha'],
     model_params['batch_size'],
+    model_params['norm_type'],
     model_params['beta1'],
     model_params['beta2'],
     model_params['n_critic'],

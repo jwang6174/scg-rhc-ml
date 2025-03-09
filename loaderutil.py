@@ -5,7 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 
 class SCGDataset(Dataset):
 
-  def __init__(self, segments, segment_size, stats):
+  def __init__(self, segments, segment_size, stats, norm_type):
     """
     Container dataset class.
 
@@ -16,8 +16,9 @@ class SCGDataset(Dataset):
       
       stats (dict[str,float]): Various summary statistics for different signals.
 
+      norm_type (str): Normalization type.
     """
-    self.segments = self.init_segments(segments, segment_size, stats)
+    self.segments = self.init_segments(segments, segment_size, stats, norm_type)
 
   def pad(self, signal, segment_size):
     """
@@ -49,7 +50,7 @@ class SCGDataset(Dataset):
     signal = torch.tensor(signal.T, dtype=torch.float32)
     return signal
 
-  def z_norm(self, signal, signal_avg, signal_std):
+  def z_score_global(self, signal, signal_avg, signal_std):
     """
     Args:
       signal (ndarray): An (MxN) 2d numpy array, where M is the signal length and
@@ -60,12 +61,26 @@ class SCGDataset(Dataset):
       signal_std (float); Signal standard deviation.
 
     Returns:
-      signal (ndarray): Z normalized signal.
+      signal (ndarray): Z normalized signal with respect to all segments.
     """
     signal = (signal - signal_avg) / signal_std
     return signal
 
-  def init_segments(self, segments, segment_size, stats):
+  def minmax_local(self, signal):
+    """
+    Args:
+      signal (ndarray): An (MxN) 2d numpy array, where M is the signal length and
+      N is the number of channels.
+
+    Returns:
+      signal (ndarary): Minmax normalized signal with respective to this segment.
+    """
+    min = np.min(signal)
+    max = np.max(signal)
+    signal = (signal - min) / (max - min)
+    return signal
+
+  def init_segments(self, segments, segment_size, stats, norm_type):
     """
     Args:
       segments (list[dict]): Pre-processed segments.
@@ -74,12 +89,23 @@ class SCGDataset(Dataset):
 
       stats (dict[str,float]): Various summary statistics for different signals.
 
+      norm_type (str): Normalization type.
+
+    Raises:
+      (ValueError) If invalid value passed for norm_type.
+
     Returns:
       segments (list[dict]): Processed segments.
     """
     for segment in segments:
-      acc = self.z_norm(segment['acc'], stats['acc_avg'], stats['acc_std'])
-      rhc = self.z_norm(segment['rhc'], stats['rhc_avg'], stats['rhc_std'])
+      if norm_type == 'minmax_local':
+        acc = self.minmax_local(segment['acc'])
+        rhc = self.minmax_local(segment['rhc'])
+      elif norm_type == 'z_score_global':
+        acc = self.z_score_global(segment['acc'], stats['acc_avg'], stats['acc_std'])
+        rhc = self.z_score_global(segment['rhc'], stats['rhc_avg'], stats['rhc_std'])
+      else:
+        raise ValueError('Invalid value passed for norm_type.')
       acc = self.invert(acc)
       rhc = self.invert(rhc)
       acc = self.pad(acc, segment_size)
@@ -106,19 +132,20 @@ class SCGDataset(Dataset):
     return self.segments[index]
 
 
-def get_loader(segments, segment_size, batch_size, stats):
+def get_loader(segments, segment_size, batch_size, stats, norm_type):
   """
   Args:
     segments (list[ndarray]): List of segments.
     segmentsize (int): Number of samples in segment.
     batch_size (int): Loader batch size.
     stats (dict[str,float]): Various summary statistics for different signals.
+    norm_type (str): Normalization type.
 
   Returns:
     loader (DataLoader): Utility that provides an iterableo over a dataset,
     streamlining the process of feeding data to a model during training or
     evaluation.
   """
-  dataset = SCGDataset(segments, segment_size, stats)
+  dataset = SCGDataset(segments, segment_size, stats, norm_type)
   loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
   return loader

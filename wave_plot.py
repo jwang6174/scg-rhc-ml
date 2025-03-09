@@ -63,7 +63,8 @@ def save_rand_RHC_plots(model_name, checkpoint_name, dataset_type, num_plots,
     loader = get_loader(segments, 
                         dataset_params['segment_size'] * sample_rate, 
                         model_params['batch_size'],
-                        global_stats)
+                        global_stats,
+                        model_params['norm_type'])
 
   # Get generator.
   num_in_channels = len(dataset_params['acc_channels'])
