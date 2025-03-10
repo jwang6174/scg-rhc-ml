@@ -213,6 +213,7 @@ GitHub.sublime-settings
 *.chk
 *.txt
 *.out
+*.csv
 wave_pipe.py
 global_stats*
 segment_info*
