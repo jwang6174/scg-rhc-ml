@@ -35,11 +35,22 @@ def save_rand_RHC_plots(model_name, checkpoint_name, dataset_type, num_plots,
   with open(dataset_path, 'r') as f:
     dataset_params = json.load(f)
 
-  # Get segments.
+  # Get global stats.
+  stats_name = f'global_stats_{dataset_fold}.json'
+  stats_path = os.path.join('datasets', dataset_name, stats_name)
+  with open(stats_path, 'r') as f:
+    global_stats = json.load(f)
+
+  # Get segments and loader.
   segments_name = f'valid_segments_{dataset_fold}.pkl'
   segments_path = os.path.join('datasets', dataset_name, segments_name)
   with open(segments_path, 'rb') as f:
     segments = pickle.load(f)
+    loader = get_loader(segments, 
+                        dataset_params['segment_size'] * sample_rate, 
+                        1,
+                        global_stats,
+                        model_params['norm_type'])
 
   # Create plots directory if not exists.
   plots_dir_path = os.path.join('models', model_name, 'plots')
@@ -50,21 +61,6 @@ def save_rand_RHC_plots(model_name, checkpoint_name, dataset_type, num_plots,
   checkpoint_path = os.path.join('models', model_name, 'checkpoints', 
                                  f'{checkpoint_name}.chk')
   checkpoint = torch.load(checkpoint_path, weights_only=False)
-
-  # Get global stats.
-  stats_name = f'global_stats_{dataset_fold}.json'
-  stats_path = os.path.join('datasets', dataset_name, stats_name)
-  with open(stats_path, 'r') as f:
-    global_stats = json.load(f)
-
-  # Get data loader.
-  with open(segments_path, 'rb') as f:
-    segments = pickle.load(f)
-    loader = get_loader(segments, 
-                        dataset_params['segment_size'] * sample_rate, 
-                        model_params['batch_size'],
-                        global_stats,
-                        model_params['norm_type'])
 
   # Get generator.
   num_in_channels = len(dataset_params['acc_channels'])
