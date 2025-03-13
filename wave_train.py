@@ -166,7 +166,7 @@ class Generator(nn.Module):
     Modify tensor A to be the same size as tensor B. 
     """
     if A.size(2) > B.size(2):
-      A = A[..., :B.size(-1)]
+      A = A[..., :B.size(2)]
     elif A.size(2) < B.size(2):
       A = F.pad(B, (0, B.size(2) - A.size(2)))
     return A
