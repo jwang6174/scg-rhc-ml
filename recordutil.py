@@ -329,7 +329,6 @@ def get_train_record_names(test_record_names, db_path):
   return record_names
 
 
-
 def get_record_segments(record_name, acc_channels, chamber, segment_size, 
                         flat_amp_threshold, flat_min_duration, straight_threshold, 
                         min_RHC, max_RHC, db_path, sample_rate):
@@ -406,7 +405,7 @@ def get_dataset_segments(record_names, acc_channels, chamber, segment_size,
   return dataset_segments
 
 
-def save_dataset(dataset_name, acc_channels, chamber, segment_size, 
+def save_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segment_size,
                  num_tests, num_folds, flat_amp_threshold, flat_min_duration, 
                  straight_threshold, min_RHC, max_RHC, db_path, sample_rate):
   """
@@ -414,6 +413,8 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
 
   Args:
     dataset_name (str): Dataset name.
+    dataset_mirror (str): If set, new dataset will mirror this dataset in terms
+      of folds, test records, and train records.
     batch_size (int): Batch size.
     acc_channels (list[str]): ACC channels.
     chamber (str): Heart chamber of interest when performing waveform prediction.
@@ -433,11 +434,25 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
   # Define signal names.
   signal_names = ['acc', 'rhc']
 
-  # Get names of all records that may be included in a test set.
-  all_test_records = get_test_record_names(db_path)
+  # Use this if creating a new datset from scratch.
+  if dataset_mirror is None:
 
-  # Randomly split test records into groups of a given length.
-  test_record_groups = get_groups(all_test_records, num_tests)[:num_folds]
+    # Get names of all records that may be included in a test set.
+    all_test_records = get_test_record_names(db_path)
+
+    # Randomly split test records into groups of a given length.
+    test_record_groups = get_groups(all_test_records, num_tests)[:num_folds]
+
+  # Use this if mirroring a prior dataset.
+  else:
+    test_record_groups = []
+    dataset_filepath = os.path.join('datasets', dataset_mirror)
+    for filename in sorted(os.listdir(dataset_filepath)):
+      if filename[:12] == 'segment_info':
+        with open(os.path.join(dataset_filepath, filename), 'r') as f:
+          data = json.load(f)
+          test_record_groups.append(data['test_records'])
+
 
   # Create different hold out sets.
   for i, test_records in enumerate(test_record_groups):
@@ -493,6 +508,8 @@ def save_dataset(dataset_name, acc_channels, chamber, segment_size,
     log_path = os.path.join('datasets', dataset_name, f'segment_info_{i+1}.json')
     with open(log_path, 'w') as f:
       json_str = json.dumps({
+        'train_records': train_records,
+        'test_records': test_records,
         'train_segments': len(train_segments),
         'valid_segments': len(valid_segments),
         'test_segments': len(test_segments),
@@ -512,6 +529,7 @@ def run(dataset_name):
     params = json.load(f)
     save_dataset(
       dataset_name,
+      params['dataset_mirror'],
       params['acc_channels'],
       params['chamber'],
       params['segment_size'],
