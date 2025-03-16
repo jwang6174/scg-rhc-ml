@@ -179,7 +179,7 @@ def run(model_name, dataset_type, checkpoint_mode):
 
   # Get all checkpoint paths if specified.
   if checkpoint_mode == 'all':
-    checkpoint_names = set((os.listdir(checkpoint_dir_path)))
+    checkpoint_names = sorted(os.listdir(checkpoint_dir_path))
 
   # Get best checkpoint determined on valid set.
   elif checkpoint_mode == 'best':
