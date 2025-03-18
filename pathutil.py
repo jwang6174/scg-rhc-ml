@@ -2,7 +2,7 @@ import os
 import shutil
 
 # SCG-RHC database path.
-DATABASE_PATH = os.path.join('/', 'home', 'jesse', 'scg-rhc-database')
+DATABASE_PATH = os.path.join('/', 'home', 'jesse', 'scg-rhc-db')
 
 
 def clear_dir(paths):
