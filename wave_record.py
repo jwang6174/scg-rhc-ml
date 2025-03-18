@@ -405,9 +405,9 @@ def get_dataset_segments(record_names, acc_channels, chamber, segment_size,
   return dataset_segments
 
 
-def save_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segment_size,
-                 num_tests, num_folds, flat_amp_threshold, flat_min_duration, 
-                 straight_threshold, min_RHC, max_RHC, db_path, sample_rate):
+def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segment_size,
+                      num_tests, num_folds, flat_amp_threshold, flat_min_duration, 
+                      straight_threshold, min_RHC, max_RHC, db_path, sample_rate):
   """
   Save list of train, validation, and test segments as pickle files.
 
@@ -415,7 +415,6 @@ def save_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segment_si
     dataset_name (str): Dataset name.
     dataset_mirror (str): If set, new dataset will mirror this dataset in terms
       of folds, test records, and train records.
-    batch_size (int): Batch size.
     acc_channels (list[str]): ACC channels.
     chamber (str): Heart chamber of interest when performing waveform prediction.
     segment_size (float): Segment duration (sec).
@@ -429,7 +428,7 @@ def save_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segment_si
     db_path (str): SCG-RHC database path.
     sample_rate (int): Sample rate (Hz).
   """
-  print(f'Run recordutil.py for {dataset_name}')
+  print(f'Run wave_record.py for {dataset_name}')
 
   # Define signal names.
   signal_names = ['acc', 'rhc']
@@ -441,7 +440,13 @@ def save_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segment_si
     all_test_records = get_test_record_names(db_path)
 
     # Randomly split test records into groups of a given length.
-    test_record_groups = get_groups(all_test_records, num_tests)[:num_folds]
+    all_groups = get_groups(all_test_records, num_tests)
+
+    # Use first couple of batches for test set.
+    test_record_groups = all_groups[:num_folds]
+
+    # Use another set of da
+    valid_record_group = 
 
   # Use this if mirroring a prior dataset.
   else:
@@ -527,7 +532,7 @@ def run(dataset_name):
   dataset_params_path = os.path.join('datasets', dataset_name, 'params.json')
   with open(dataset_params_path, 'r') as f:
     params = json.load(f)
-    save_dataset(
+    save_wave_dataset(
       dataset_name,
       params['dataset_mirror'],
       params['acc_channels'],
