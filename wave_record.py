@@ -325,7 +325,7 @@ def get_train_record_names(test_record_names, db_path):
   Returns:
     record_names (list[str]): Record names in train set.
   """
-  record_names = sorted(list(set(get_record_names(db_path)) - set(test_record_names)))
+  record_names = list(set(get_record_names(db_path)) - set(test_record_names))
   return record_names
 
 
@@ -405,7 +405,7 @@ def get_dataset_segments(record_names, acc_channels, chamber, segment_size,
   return dataset_segments
 
 
-def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segment_size,
+def save_wave_dataset(dataset_name, acc_channels, chamber, segment_size,
                       num_tests, num_folds, flat_amp_threshold, flat_min_duration, 
                       straight_threshold, min_RHC, max_RHC, db_path, sample_rate):
   """
@@ -413,8 +413,6 @@ def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segme
 
   Args:
     dataset_name (str): Dataset name.
-    dataset_mirror (str): If set, new dataset will mirror this dataset in terms
-      of folds, test records, and train records.
     acc_channels (list[str]): ACC channels.
     chamber (str): Heart chamber of interest when performing waveform prediction.
     segment_size (float): Segment duration (sec).
@@ -433,31 +431,14 @@ def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segme
   # Define signal names.
   signal_names = ['acc', 'rhc']
 
-  # Use this if creating a new datset from scratch.
-  if dataset_mirror is None:
+  # Get names of all records that may be included in a test set.
+  all_test_records = get_test_record_names(db_path)
 
-    # Get names of all records that may be included in a test set.
-    all_test_records = get_test_record_names(db_path)
+  # Randomly split test records into groups of a given length.
+  all_groups = get_groups(all_test_records, num_tests)
 
-    # Randomly split test records into groups of a given length.
-    all_groups = get_groups(all_test_records, num_tests)
-
-    # Use first couple of batches for test set.
-    test_record_groups = all_groups[:num_folds]
-
-    # Use another set of da
-    valid_record_group = 
-
-  # Use this if mirroring a prior dataset.
-  else:
-    test_record_groups = []
-    dataset_filepath = os.path.join('datasets', dataset_mirror)
-    for filename in sorted(os.listdir(dataset_filepath)):
-      if filename[:12] == 'segment_info':
-        with open(os.path.join(dataset_filepath, filename), 'r') as f:
-          data = json.load(f)
-          test_record_groups.append(data['test_records'])
-
+  # Use first couple of batches for test set.
+  test_record_groups = all_groups[:num_folds]
 
   # Create different hold out sets.
   for i, test_records in enumerate(test_record_groups):
@@ -466,8 +447,18 @@ def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segme
     # Identify training records by subtracting test records from all records.
     train_records = get_train_record_names(test_records, db_path)
 
-    # Get training segments.
+    # Take a certain number of train records for the valid set.
+    valid_records = train_records[:num_tests]
+    train_records = train_records[num_tests:]
+
+    # Get train segments.
     train_segments = get_dataset_segments(train_records, acc_channels, chamber, 
+                                          segment_size, flat_amp_threshold, 
+                                          flat_min_duration, straight_threshold, 
+                                          min_RHC, max_RHC, db_path, sample_rate)
+
+    # Get valid segments.
+    valid_segments = get_dataset_segments(valid_records, acc_channels, chamber, 
                                           segment_size, flat_amp_threshold, 
                                           flat_min_duration, straight_threshold, 
                                           min_RHC, max_RHC, db_path, sample_rate)
@@ -480,7 +471,7 @@ def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segme
 
     # Calculate global stats for each signal across all segments and save 
     # to file. To be used for feature normalization during training.
-    all_segments = train_segments + test_segments
+    all_segments = train_segments + valid_segments + test_segments
     global_stats = get_global_stats(all_segments, signal_names)
     global_stats_path = os.path.join('datasets', dataset_name, f'global_stats_{i+1}.json')
     with open(global_stats_path, 'w') as f:
@@ -488,11 +479,6 @@ def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segme
 
     # Add local stats to all segments.
     add_local_stats(all_segments, signal_names)
-
-    # Subset random portion of training segments for validation.
-    train_segments, valid_segments = train_test_split(train_segments,
-                                                      train_size=0.95,
-                                                      shuffle=True)
   
     # Save train segments.
     train_path = os.path.join('datasets', dataset_name, f'train_segments_{i+1}.pkl')
@@ -515,6 +501,7 @@ def save_wave_dataset(dataset_name, dataset_mirror, acc_channels, chamber, segme
       json_str = json.dumps({
         'train_records': train_records,
         'test_records': test_records,
+        'valid_records': valid_records,
         'train_segments': len(train_segments),
         'valid_segments': len(valid_segments),
         'test_segments': len(test_segments),
@@ -534,7 +521,6 @@ def run(dataset_name):
     params = json.load(f)
     save_wave_dataset(
       dataset_name,
-      params['dataset_mirror'],
       params['acc_channels'],
       params['chamber'],
       params['segment_size'],
