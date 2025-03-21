@@ -12,8 +12,6 @@ NUM_STEPS = 5 * SAMPLE_RATE
 # Define RHC types of interest.
 RHC_TYPES = [
   'PAM',
-  'PCWA Wave',
-  'PCWV Wave',
   'PCWM',
   'PCWHR',
   'SVmL/beat',
@@ -31,6 +29,9 @@ ACC_CHANNELS = [
 ECG_CHANNELS = [
   'patch_ECG'
 ]
+
+# Segment info to ignore when normalizing.
+IGNORE = set(['start', 'end', 'record_name'])
 
 
 def get_start_and_end_times(record_name):
@@ -173,84 +174,7 @@ def get_sample_index(start_time, sample_time):
   return sample_index
 
 
-def get_noisy_signal(signal):
-  """
-  Add a mix of Gaussian noise and salt-and-pepper noise to a waveform. This 
-  approach simulates real-world artifacts, combining background measurement 
-  noise (Gaussian) with occasional impulse noise (salt-and-pepper).
-
-  Args:
-    signal (ndarray): An (MxN) 2d numpy array, where M is the signal length and
-    N is the number of channels.
-
-  Returns:
-    noisy_signal (ndarray): Signal injected with noise.
-  """
-
-  # Inject Gaussian noise.
-  gaussian_std = 0.1
-  gaussian_noise = np.random.normal(0, gaussian_std, signal.shape)
-  noisy_signal = signal + gaussian_noise
-
-  # Inject salt-and-pepper noise.
-  noise_prob = 0.02
-  min_val, max_val = -1000, 1000
-  num_noisy_samples = int(noise_prob * len(signal))
-  for i in range(signal.shape[1]):
-    indexes = np.random.choice(signal.shape[0], num_noisy_samples, replace=False)
-    noisy_signal[indexes, i] = np.random.choice([min_val, max_val], 
-                                                size=num_noisy_samples)
-
-  return noisy_signal
-
-
-def get_noisy_rhc_vals(real_vals):
-  """
-  Randomly add or subtract 1-15% of each RHC value.
-
-  Args:
-    real_vals (dict): Original RHC values without noise.
-
-  Returns:
-    noisy_vals (dict): RHC values with noise.
-  """
-  noisy_vals = {}
-  for k, v in real_vals.items():
-    if k == 'PCWHR':
-      noisy_vals[k] = real_vals[k]
-      continue
-    elif k == 'Avg. COmL/min':
-      continue
-    else:
-      percent_change = random.randint(1, 15) / 100
-      operation = random.choice([1, -1]) * percent_change
-      noisy_vals[k] = (1 + operation) * v
-      if k == 'SVmL/beat':
-        hr = real_vals['PCWHR']
-        sv = noisy_vals[k]
-        noisy_vals['Avg. COmL/min'] = (1 + operation) * sv * hr
-  for k, v in noisy_vals.items():
-    noisy_vals[k] = np.array([v])
-  return noisy_vals
-
-
-def get_noisy_weight(real_weight):
-  """
-  Randomly add or subtract 0-2 kg.
-
-  Args:
-    real_weight (float): Real weight.
-
-  Returns:
-    noisy_weight (float): Weight randomly increased or decreased by 0-2 kg.
-  """
-  change = random.randint(0, 20) / 10
-  noisy_weight = (random.choice([1, -1]) * change) + real_weight
-  return noisy_weight
-
-
-
-def add_record_segments(dataset_segments, record_name, rhc_df, add_noisy):
+def add_record_segments(dataset_segments, record_name, rhc_df):
   """
   Add record segments to list of dataset segments.
 
@@ -258,7 +182,6 @@ def add_record_segments(dataset_segments, record_name, rhc_df, add_noisy):
     dataset_segments (list[dict]): List of dataset segments.
     record_name (str): Name of record to get segments from.
     rhc_df (DataFrame): Contains different RHC values for all records.
-    add_noisy (bool): Whether to also add noisy verions of record segments.
   """
 
   # Subset RHC dataframe for the given record.
@@ -296,7 +219,9 @@ def add_record_segments(dataset_segments, record_name, rhc_df, add_noisy):
       challenge_rhc_vals[rhc_type] = rhc_val
 
   # Add baseline and challenge RHC vals to list.
-  all_rhc_vals = [baseline_rhc_vals, challenge_rhc_vals]
+  all_rhc_vals = [baseline_rhc_vals]
+  if len(challenge_rhc_vals) > 0: 
+    all_rhc_vals.append(challenge_rhc_vals)
 
   # Get ACC signals.
   acc_indexes = [record.sig_name.index(x) for x in ACC_CHANNELS]
@@ -338,56 +263,32 @@ def add_record_segments(dataset_segments, record_name, rhc_df, add_noisy):
         acc_segment = acc[segment_start:segment_end,]
         ecg_segment = ecg[segment_start:segment_end,]
         if len(acc_segment) > 0 and len(ecg_segment) > 0:
-          fft_segment = np.abs(np.fft.rfft(acc_segment, axis=0))
           segment = {
             'acc': acc_segment,
             'ecg': ecg_segment,
-            'ftt': fft_segment,
             'height': np.array([height]),
             'weight': np.array([weight]),
+            'bmi': np.array([height / weight / weight * 10_000]),
             'record_name': record_name,
             'start': segment_start,
             'end': segment_end,
-            'real': True,
           }
           segment.update(rhc_vals)
           dataset_segments.append(segment)
 
-          # Add several noisy ACC signals with variable RHC values.
-          if add_noisy:
-            for i in range(5):
-              noisy_acc_segment = get_noisy_signal(acc_segment)
-              noisy_ftt_segment = np.abs(np.fft.rfft(noisy_acc_segment, axis=0))
-              noisy_weight = get_noisy_weight(weight)
-              segment = {
-                'acc': noisy_acc_segment,
-                'ftt': noisy_ftt_segment,
-                'ecg': ecg_segment,
-                'height': np.array([height]),
-                'weight': np.array([noisy_weight]),
-                'record_name': record_name,
-                'start': segment_start,
-                'end': segment_end,
-                'real': False,
-              }
-              noisy_rhc_vals = get_noisy_rhc_vals(rhc_vals)
-              segment.update(noisy_rhc_vals)
-              dataset_segments.append(segment)
 
-
-def get_dataset_segments(record_names, rhc_df, add_noisy=False):
+def get_dataset_segments(record_names, rhc_df):
   """
   Args:
     record_names (list[str]): Names of records to get segments from.
     rhc_df (DataFrame): Contains different RHC values for all records.
-    add_noisy (bool): Whether to also add noisy verions of record segments.
 
   Returns:
     dataset_segments (list[dict]): Dataset segments.
   """
   dataset_segments = []
   for i, record_name in enumerate(record_names):
-    add_record_segments(dataset_segments, record_name, rhc_df, add_noisy)
+    add_record_segments(dataset_segments, record_name, rhc_df)
   return dataset_segments
 
 
@@ -410,13 +311,12 @@ def get_global_stats(train_segments, valid_segments, test_segments):
   sdiff = {}
   stats = {}
 
-  ignore = set(['start', 'end', 'real', 'record_name'])
   segment_bunches = [train_segments, valid_segments, test_segments]
 
   for bunch in segment_bunches:
     for segment in bunch:
       for k, v in segment.items():
-        if k not in ignore:
+        if k not in IGNORE:
           sums[k] = sums.get(k, 0) + np.sum(v)
           cnts[k] = cnts.get(k, 0) + v.size
           maxs[k] = np.max([maxs[k], np.max(v)]) if k in maxs else np.max(v)
@@ -428,7 +328,7 @@ def get_global_stats(train_segments, valid_segments, test_segments):
   for bunch in segment_bunches:
     for segment in bunch:
       for k, v in segment.items():
-        if k not in ignore:
+        if k not in IGNORE:
           sdiff[k] = sdiff.get(k, 0) + ((v.flatten() - avgs[k]) ** 2).sum()
 
   for k in sums:
@@ -451,7 +351,6 @@ def save_hemo_dataset(dataset_name):
   Args:
     dataset_name (str): Dataset name.
   """
-  print(f'Run hemo_record.py for {dataset_name}')
 
   # Define number of test records and folds to be used.
   num_valid = 3
@@ -481,7 +380,7 @@ def save_hemo_dataset(dataset_name):
     valid_records = train_records[:num_valid]
     train_records = train_records[num_valid:]
 
-    # Define file paths.
+    # Define valid, test, and stats paths.
     train_path = os.path.join('datasets', dataset_name, f'train_segments_{i+1}.pkl')
     valid_path = os.path.join('datasets', dataset_name, f'valid_segments_{i+1}.pkl')
     test_path = os.path.join('datasets', dataset_name, f'test_segments_{i+1}.pkl')
@@ -494,17 +393,17 @@ def save_hemo_dataset(dataset_name):
     if os.path.exists(stats_path): os.remove(stats_path)
 
     # Get train segments.
-    train_segments = get_dataset_segments(train_records, rhc_df, add_noisy=True)
+    train_segments = get_dataset_segments(train_records, rhc_df)
     with open(train_path, 'wb') as f:
       pickle.dump(train_segments, f)
 
     # Get valid segments.
-    valid_segments = get_dataset_segments(valid_records, rhc_df, add_noisy=False)
+    valid_segments = get_dataset_segments(valid_records, rhc_df)
     with open(valid_path, 'wb') as f:
       pickle.dump(valid_segments, f)
 
     # Get test segments.
-    test_segments = get_dataset_segments(test_records, rhc_df, add_noisy=False)
+    test_segments = get_dataset_segments(test_records, rhc_df)
     with open(test_path, 'wb') as f:
       pickle.dump(test_segments, f)
 
