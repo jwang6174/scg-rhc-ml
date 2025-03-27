@@ -11,10 +11,6 @@ NUM_STEPS = 5 * SAMPLE_RATE
 
 # Define RHC types of interest.
 RHC_TYPES = [
-  'PAM',
-  'PCWM',
-  'PCWHR',
-  'SVmL/beat',
   'Avg. COmL/min'
 ]
 
@@ -255,10 +251,9 @@ def add_record_segments(dataset_segments, record_name, rhc_df):
         break
     else:
       challenge_start, challenge_end = challenge_interval
-      num_segments = int((challenge_end - challenge_start) // NUM_STEPS)
 
-      for i in range(num_segments):
-        segment_start = int((i * NUM_STEPS) + challenge_start)
+      segment_start = 0
+      while segment_start < challenge_end:
         segment_end = int(segment_start + NUM_STEPS)
         acc_segment = acc[segment_start:segment_end,]
         ecg_segment = ecg[segment_start:segment_end,]
@@ -275,6 +270,7 @@ def add_record_segments(dataset_segments, record_name, rhc_df):
           }
           segment.update(rhc_vals)
           dataset_segments.append(segment)
+        segment_start += NUM_STEPS // 4
 
 
 def get_dataset_segments(record_names, rhc_df):
