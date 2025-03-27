@@ -17,15 +17,6 @@ class HemoDataset(Dataset):
   def __init__(self, segments):
     self.segments = segments
 
-  def add_time_jitter(self, signal, max_shift=50):
-    shift = torch.randint(-max_shift, max_shift + 1, (1,)).item()
-    if shift == 0:
-      return signal
-    elif shift > 0:
-      return torch.cat([signal[..., shift:], torch.zeros_like(signal[..., :shift])], dim=-1)
-    else:
-      return torch.cat([torch.zeros_like(signal[..., shift:]), signal[..., :shift]], dim=-1)
-
   def add_amplitude_noise(self, signal, noise_level=0.01):
     noise = torch.randn_like(signal) * noise_level
     return signal + noise
@@ -43,16 +34,10 @@ class HemoDataset(Dataset):
         if k == 'PCWHR':
           noisy_vals[k] = segment[k]
           continue
-        elif k == 'Avg. COmL/min':
-          continue
         else:
-          percent_change = random.randint(5, 15) / 100
+          percent_change = random.randint(1, 5) / 100
           operation = random.choice([1, -1]) * percent_change
           noisy_vals[k] = (1 + operation) * v
-          if k == 'SVmL/beat':
-            hr = segment['PCWHR']
-            sv = noisy_vals[k]
-            noisy_vals['Avg. COmL/min'] = (1 + operation) * sv * hr
     return noisy_vals
 
   def pad(self, signal):
@@ -78,7 +63,6 @@ class HemoDataset(Dataset):
     segment = self.segments[index]
 
     acc = self.pad(self.invert(segment['acc']))
-    acc = self.add_time_jitter(acc)
     acc = self.add_amplitude_noise(acc)
     acc = self.apply_channel_dropout(acc)
 
