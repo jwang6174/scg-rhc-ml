@@ -7,28 +7,6 @@ import torch.nn.functional as F
 from hemo_record import NUM_STEPS, RHC_TYPES
 from hemo_loader import get_loader
 
-# class AttentionBlock(nn.Module):
-
-#   def __init__(self, in_channels):
-#     super(AttentionBlock, self).__init__()
-#     self.query = nn.Conv1d(in_channels, in_channels // 8, 1)
-#     self.key = nn.Conv1d(in_channels, in_channels // 8, 1)
-#     self.value = nn.Conv1d(in_channels, in_channels, 1)
-#     self.gamma = nn.Parameter(torch.zeros(1))
-
-#   def forward(self, x):
-#     B, C, T = x.size()
-#     Q = self.query(x).permute(0, 2, 1) # B x T x C'
-#     K = self.key(x) # B x C' x T
-#     V = self.value(x) # B x C x T
-
-#     attn = torch.bmm(Q, K) / (K.size(1) ** 0.5) # B x T x T
-#     attn = F.softmax(attn, dim=-1)
-
-#     out = torch.bmm(V, attn.permute(0, 2, 1)) # B x C x T
-#     out = self.gamma * out + x
-#     return out
-
 
 class SelfCrossAttentionBlock(nn.Module):
 
@@ -114,15 +92,58 @@ class CardiovascularPredictor(nn.Module):
     return out
 
 
-def train(data_name, data_fold):
+class RMSE_PCC_Loss(nn.Module):
+
+  def __init__(self, alpha=1.0, return_components=False):
+    super(RMSE_PCC_Loss, self).__init__()
+    self.alpha = alpha
+    self.return_components = return_components
+
+  def forward(self, y_pred, y_true):
+    y_pred = y_pred.view(y_pred.size(0), -1)
+    y_true = y_true.view(y_true.size(0), -1)
+
+    # RMSE
+    mse = torch.mean((y_true - y_pred) ** 2, dim=1)
+    rmse = torch.sqrt(mse + 1e-8).mean()
+
+    # PCC per output
+    vx = y_pred - y_pred.mean(dim=0, keepdim=True)
+    vy = y_true - y_true.mean(dim=0, keepdim=True)
+    numerator = (vx * vy).sum(dim=0)
+    denominator = torch.sqrt((vx ** 2).sum(dim=0)) * torch.sqrt((vy ** 2).sum(dim=0)) + 1e-8
+    pcc_per_output = numerator / denominator
+    mean_pcc = pcc_per_output.mean()
+
+    loss = rmse + self.alpha * (1 - mean_pcc)
+
+    if self.return_components:
+      return loss, rmse.item(), mean_pcc.item()
+    return loss
+
+
+def train(model_name, data_name, data_fold):
 
   model = CardiovascularPredictor()
   optim = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-  criterion = nn.MSELoss()
+  criterion = RMSE_PCC_Loss(alpha=5.0, return_components=True)
 
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
   model = model.to(device)
   criterion = criterion.to(device)
+
+  model_best_path = os.path.join('models', model_name, 'model_best.chk')
+  model_last_path = os.path.join('models', model_name, 'model_last.chk')
+
+  if os.path.exists(model_last_path):
+    checkpoint = torch.load(model_last_path, weights_only=False)
+    epoch = checkpoint['epoch'] + 1
+    min_valid_loss = checkpoint['min_valid_loss']
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optim.load_state_dict(checkpoint['optim_state_dict'])
+  else:
+    epoch = 0
+    min_valid_loss = float('inf')
 
   filepath = os.path.join('datasets', data_name, f'global_stats_{data_fold}.json')
   with open(filepath, 'r') as f:
@@ -134,10 +155,12 @@ def train(data_name, data_fold):
   filepath = os.path.join('datasets', data_name, f'train_segments_{data_fold}.pkl')
   train_loader = get_loader(filepath, global_segment_stats, 64)
 
-  for epoch in range(100):
+  while epoch < 500:
+
     model.train()
     train_loss = 0
-
+    train_rmse = 0
+    train_pcc = 0
     for acc, ecg, bmi, label in train_loader:
       acc = acc.to(device)
       ecg = ecg.to(device)
@@ -146,14 +169,18 @@ def train(data_name, data_fold):
 
       optim.zero_grad()
       pred_y = model(acc, ecg, bmi)
-      loss = criterion(real_y, pred_y)
+      loss, batch_rmse, batch_pcc  = criterion(real_y, pred_y)
       loss.backward()
       optim.step()
 
       train_loss += loss.item()
+      train_rmse += batch_rmse
+      train_pcc += batch_pcc
 
     model.eval()
     valid_loss = 0
+    valid_rmse = 0
+    valid_pcc = 0
     with torch.no_grad():
       for acc, ecg, bmi, label in valid_loader:
         acc = acc.to(device)
@@ -162,21 +189,44 @@ def train(data_name, data_fold):
         real_y = label.to(device)
 
         pred_y = model(acc, ecg, bmi)
-        loss = criterion(real_y, pred_y)
+        loss, batch_rmse, batch_pcc = criterion(real_y, pred_y)
+
         valid_loss += loss.item()
+        valid_rmse += batch_rmse
+        valid_pcc += batch_pcc
 
     train_loss /= len(train_loader)
+    train_rmse /= len(train_loader)
+    train_pcc /= len(train_loader)
+
     valid_loss /= len(valid_loader)
+    valid_rmse /= len(valid_loader)
+    valid_pcc /= len(valid_loader)
+
     print(f'Epoch {epoch+1}: '
-          f'Train Loss = {train_loss:.4f}, '
-          f'Valid Loss = {valid_loss:.4f}')
+          f'Train Loss = {train_loss:.4f}, RMSE = {train_rmse:.4f}, PCC = {train_pcc:.4f} | '
+          f'Valid Loss = {valid_loss:.4f}, RMSE = {valid_rmse:.4f}, PCC = {valid_pcc:.4f}')
+
+    if valid_loss < min_valid_loss:
+      min_valid_loss = valid_loss
+      checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optim_state_dict': optim.state_dict(),
+        'min_valid_loss': min_valid_loss,
+      }
+      torch.save(checkpoint, model_best_path)
+      print('Saved model')
+    torch.save(checkpoint, model_last_path)
+
+    epoch += 1
 
   print('Training done')
 
 
-# --- Example usage ---
 if __name__ == '__main__':
-  data_name = 'hemo_data_1'
+  model_name = 'hemo_model_2'
+  data_name = 'hemo_data_2'
   data_fold = '1'
-  train(data_name, data_fold)
+  train(model_name, data_name, data_fold)
   
