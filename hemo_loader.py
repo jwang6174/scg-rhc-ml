@@ -6,7 +6,7 @@ import pickle
 import random
 import torch
 import torch.nn.functional as F
-from hemo_record import NUM_STEPS, RHC_TYPES, ACC_CHANNELS, ECG_CHANNELS, IGNORE
+from hemo_record import NUM_STEPS, RHC_TYPE, ACC_CHANNELS, ECG_CHANNELS, IGNORE
 from torch.utils.data import Dataset, DataLoader
 
 BATCH_SIZE = 64
@@ -27,18 +27,11 @@ class HemoDataset(Dataset):
       signal[channels_to_zero] = 0.0
     return signal
 
-  def get_noisy_hemos(self, segment):
-    noisy_vals = {}
-    for k, v in segment.items():
-      if k in RHC_TYPES:
-        if k == 'PCWHR':
-          noisy_vals[k] = segment[k]
-          continue
-        else:
-          percent_change = random.randint(1, 5) / 100
-          operation = random.choice([1, -1]) * percent_change
-          noisy_vals[k] = (1 + operation) * v
-    return noisy_vals
+  def get_noisy_rhc_val(self, rhc_val):
+    percent_change = random.randint(1, 10) / 100
+    operation = random.choice([1, -1]) * percent_change
+    noisy_val = (1 + operation) * rhc_val
+    return noisy_val
 
   def pad(self, signal):
     if signal.shape[-1] < NUM_STEPS:
@@ -72,15 +65,8 @@ class HemoDataset(Dataset):
     bmi = weight / ((segment['height'] / 100) ** 2)
     bmi = torch.tensor(bmi, dtype=torch.float32)
 
-    hemos = self.get_noisy_hemos(segment)
-    label= torch.tensor([
-      hemos['PAM'][0],
-      hemos['PCWM'][0],
-      hemos['PCWHR'][0],
-      hemos['SVmL/beat'][0],
-      hemos['Avg. COmL/min'][0]
-    ], dtype=torch.float32)
-
+    rhc_val = self.get_noisy_rhc_val(segment[RHC_TYPE])
+    label = torch.tensor(np.array([rhc_val]), dtype=torch.float32)
     return acc, ecg, bmi, label
 
 
