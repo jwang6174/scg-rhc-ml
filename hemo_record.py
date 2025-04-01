@@ -2,17 +2,19 @@ import json
 import numpy as np
 import os
 import pandas as pd
+import random
 import sys
 from pathutil import DATABASE_PATH
 from wave_record import *
 
 # Define number of time steps.
-NUM_STEPS = 5 * SAMPLE_RATE
+NUM_STEPS = 10 * SAMPLE_RATE
 
-# Define RHC types of interest.
-RHC_TYPES = [
-  'Avg. COmL/min'
-]
+# Define RHC types of interest. Need to strongly consider the distribution of
+# each type, as some records may be need to be duplicated a certain number
+# of times to maintain data balance for one RHC type, but a separate number
+# of times for a different RHC type.
+RHC_TYPE = 'Avg. COmL/min'
 
 # Define ACC channels to use.
 ACC_CHANNELS = [
@@ -28,6 +30,11 @@ ECG_CHANNELS = [
 
 # Segment info to ignore when normalizing.
 IGNORE = set(['start', 'end', 'record_name'])
+
+# Define number of test records and folds to be used.
+NUM_VALID = 7
+NUM_TESTS = 7
+NUM_FOLDS = 3
 
 
 def get_start_and_end_times(record_name):
@@ -197,27 +204,19 @@ def add_record_segments(dataset_segments, record_name, rhc_df):
   # Load WFDB record.
   record = wfdb.rdrecord(os.path.join(DATABASE_PATH, 'processed_data', record_name))
 
-  # Get baseline RHC vals.
-  baseline_rhc_vals = {}
+  # Get baseline RHC val
   baseline_df = rhc_subdf[rhc_subdf['RHC Phase'] == 'Baseline']
   if baseline_df.shape[0] > 1:
     raise ValueError(f'Multiple baselines found for record {record_name}')
-  for rhc_type in RHC_TYPES:
-    rhc_val = baseline_df.iloc[0][rhc_type]
-    baseline_rhc_vals[rhc_type] = rhc_val
+  baseline_rhc_val = baseline_df.iloc[0][RHC_TYPE]
+  all_rhc_vals = [baseline_rhc_val]
 
-  # Add challenge RHC vals, if exists and only has 1 post-challenge interval.
+  # Add challenge RHC val, if exists and only has 1 post-challenge interval.
   challenge_rhc_vals = {}
   challenge_df = rhc_subdf[rhc_subdf['RHC Phase'] != 'Baseline']
   if challenge_df.shape[0] == 1:
-    for rhc_type in RHC_TYPES:
-      rhc_val = challenge_df.iloc[0][rhc_type]
-      challenge_rhc_vals[rhc_type] = rhc_val
-
-  # Add baseline and challenge RHC vals to list.
-  all_rhc_vals = [baseline_rhc_vals]
-  if len(challenge_rhc_vals) > 0: 
-    all_rhc_vals.append(challenge_rhc_vals)
+    challenge_rhc_val = challenge_df.iloc[0][RHC_TYPE]
+    all_rhc_vals.append(challenge_rhc_val)
 
   # Get ACC signals.
   acc_indexes = [record.sig_name.index(x) for x in ACC_CHANNELS]
@@ -239,38 +238,101 @@ def add_record_segments(dataset_segments, record_name, rhc_df):
 
   # Add segments.
   segments = []
-  for challenge_interval, rhc_vals in zip(challenge_intervals, all_rhc_vals):
 
-    # Convert all RHC values to float. If cannot convert, then value is invalid
-    # and the entire interval should be skipped.
-    for rhc_type, rhc_val in rhc_vals.items():
-      try:
-        rhc_val = np.array([float(rhc_val)])
-        rhc_vals[rhc_type] = rhc_val
-      except:
-        break
-    else:
-      challenge_start, challenge_end = challenge_interval
+  # Iterate over baseline and challenges in record, if challenge exists.
+  for (challenge_start, challenge_end), rhc_val in zip(challenge_intervals, all_rhc_vals):
+    try:
+      rhc_val = float(rhc_val)
+    except:
+      continue
+    segment_start = challenge_start
+    while segment_start < challenge_end:
+      segment_end = int(segment_start + NUM_STEPS)
+      acc_segment = acc[segment_start:segment_end,]
+      ecg_segment = ecg[segment_start:segment_end,]
+      if len(acc_segment) > 0 and len(ecg_segment) > 0:
+        segment = {
+          'acc': acc_segment,
+          'ecg': ecg_segment,
+          'height': np.array([height]),
+          'weight': np.array([weight]),
+          'bmi': np.array([height / weight / weight * 10_000]),
+          'record_name': record_name,
+          'start': segment_start,
+          'end': segment_end,
+          RHC_TYPE: np.array([rhc_val])
+        }
+        dataset_segments.append(segment)
+      segment_start += NUM_STEPS // 4
 
-      segment_start = 0
-      while segment_start < challenge_end:
-        segment_end = int(segment_start + NUM_STEPS)
-        acc_segment = acc[segment_start:segment_end,]
-        ecg_segment = ecg[segment_start:segment_end,]
-        if len(acc_segment) > 0 and len(ecg_segment) > 0:
-          segment = {
-            'acc': acc_segment,
-            'ecg': ecg_segment,
-            'height': np.array([height]),
-            'weight': np.array([weight]),
-            'bmi': np.array([height / weight / weight * 10_000]),
-            'record_name': record_name,
-            'start': segment_start,
-            'end': segment_end,
-          }
-          segment.update(rhc_vals)
-          dataset_segments.append(segment)
-        segment_start += NUM_STEPS // 4
+
+def get_bin_info(segments):
+  """
+  Use Freedman-Diaconis rule for binning RHC values.
+
+  Args:
+    segments (list[dict]): Segments.
+
+  Returns:
+    bin_width (int): Bin width.
+    num_bins (int): Number of bins.
+    min_val (float): Minimum RHC value.
+    max_val (float): Maximum RHC value.
+  """
+  data = [segment[RHC_TYPE] for segment in segments]
+  iqr = np.percentile(data, 75) - np.percentile(data, 25)
+  n = len(data)
+  bin_width = int(np.ceil(2 * iqr / n ** (1/3)))
+  min_val = int(np.floor(np.min(data)))
+  max_val = int(np.ceil(np.max(data)))
+  num_bins = int(np.ceil((max_val - min_val) / bin_width))
+  return bin_width, num_bins, min_val, max_val
+
+
+def balance_segments(segments):
+  """
+  Modify list of segments in place to be balanced using the Freedman-Diaconis
+  rule for binning data.
+
+  Args:
+    segments (list[dict]): Segments.
+  """
+
+  # Get bin info.
+  bin_width, num_bins, min_val, max_val = get_bin_info(segments)
+
+  # Initialize bins.
+  bins = {}
+  for i in range(int(np.floor(min_val)), int(np.ceil(max_val)), bin_width):
+    bins[i] = []
+
+  # Add segments to bins.
+  for segment in segments:
+    for bin_start in bins.keys():
+      if bin_start <= segment[RHC_TYPE] < bin_start + bin_width:
+        bins[bin_start].append(segment)
+
+  # Determine most frequent bin.
+  most_freq_bin = None
+  most_freq_cnt = 0
+  for bin_start, bin_segments in bins.items():
+    bin_cnt = len(bin_segments)
+    if bin_cnt > most_freq_cnt:
+      most_freq_bin = bin_start
+      most_freq_cnt = bin_cnt
+
+  # Balance segments.
+  for bin_start, bin_segments in bins.items():
+    orig_segments = list(bin_segments)
+    if len(orig_segments) > 0:
+      mod = most_freq_cnt / len(bin_segments)
+      while mod >= 2:
+        segments.extend(orig_segments)
+        mod -= 1
+      if mod > 1:
+        prob = mod - 1
+        sampled = random.sample(orig_segments, int(prob * len(orig_segments)))
+        segments.extend(sampled)
 
 
 def get_dataset_segments(record_names, rhc_df):
@@ -285,6 +347,7 @@ def get_dataset_segments(record_names, rhc_df):
   dataset_segments = []
   for i, record_name in enumerate(record_names):
     add_record_segments(dataset_segments, record_name, rhc_df)
+  balance_segments(dataset_segments)
   return dataset_segments
 
 
@@ -340,6 +403,18 @@ def get_global_stats(train_segments, valid_segments, test_segments):
   return stats
 
 
+def dump_segments(path, segments):
+  """
+  Pickle segments to designed file path.
+
+  Args:
+    path (str): File path.
+    segments (list[dict]): Segments.
+  """
+  with open(path, 'wb') as f:
+    pickle.dump(segments, f)
+
+
 def save_hemo_dataset(dataset_name):
   """
   Save list of train, validation, and test segments as pickle files.
@@ -347,11 +422,6 @@ def save_hemo_dataset(dataset_name):
   Args:
     dataset_name (str): Dataset name.
   """
-
-  # Define number of test records and folds to be used.
-  num_valid = 3
-  num_tests = 2
-  num_folds = 1
 
   # Load RHC dataframe.
   rhc_path = os.path.join(DATABASE_PATH, 'meta_information', 'RHC_values.csv')
@@ -361,10 +431,10 @@ def save_hemo_dataset(dataset_name):
   all_test_records = get_test_record_names(DATABASE_PATH)
 
   # Randomly split test records into groups of a given length.
-  all_groups = get_groups(all_test_records, num_tests)
+  all_groups = get_groups(all_test_records, NUM_TESTS)
 
   # Use first couple of batches for test set.
-  test_record_groups = all_groups[:num_folds]
+  test_record_groups = all_groups[:NUM_FOLDS]
 
   # Create different hold out sets.
   for i, test_records in enumerate(test_record_groups):
@@ -373,35 +443,36 @@ def save_hemo_dataset(dataset_name):
     train_records = get_train_record_names(test_records, DATABASE_PATH)
 
     # Take a certain number of train records for the valid set.
-    valid_records = train_records[:num_valid]
-    train_records = train_records[num_valid:]
+    valid_records = train_records[:NUM_VALID]
+    train_records = train_records[NUM_VALID:]
 
-    # Define valid, test, and stats paths.
+    # Define train, valid, and test directory paths.
     train_path = os.path.join('datasets', dataset_name, f'train_segments_{i+1}.pkl')
     valid_path = os.path.join('datasets', dataset_name, f'valid_segments_{i+1}.pkl')
     test_path = os.path.join('datasets', dataset_name, f'test_segments_{i+1}.pkl')
+
+    # Define stats path.
     stats_path = os.path.join('datasets', dataset_name, f'global_stats_{i+1}.json')
 
-    # Remove files if already exists.
+    # Remove segment paths if already exists.
     if os.path.exists(train_path): os.remove(train_path)
     if os.path.exists(valid_path): os.remove(valid_path)
     if os.path.exists(test_path): os.remove(test_path)
-    if os.path.exists(stats_path): os.remove(stats_path)
 
-    # Get train segments.
-    train_segments = get_dataset_segments(train_records, rhc_df)
-    with open(train_path, 'wb') as f:
-      pickle.dump(train_segments, f)
+    # Remove stats file if already exists.
+    if os.path.exists(stats_path): os.remove(stats_path)
 
     # Get valid segments.
     valid_segments = get_dataset_segments(valid_records, rhc_df)
-    with open(valid_path, 'wb') as f:
-      pickle.dump(valid_segments, f)
+    dump_segments(valid_path, valid_segments)
 
     # Get test segments.
     test_segments = get_dataset_segments(test_records, rhc_df)
-    with open(test_path, 'wb') as f:
-      pickle.dump(test_segments, f)
+    dump_segments(test_path, test_segments)
+
+    # Get train segments.
+    train_segments = get_dataset_segments(train_records, rhc_df)
+    dump_segments(train_path, train_segments)
 
     # Get global stats.
     global_stats = get_global_stats(train_segments, valid_segments, test_segments)
