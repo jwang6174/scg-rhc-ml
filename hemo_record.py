@@ -32,8 +32,8 @@ ECG_CHANNELS = [
 IGNORE = set(['start', 'end', 'record_name'])
 
 # Define number of test records and folds to be used.
-NUM_VALID = 7
-NUM_TESTS = 7
+NUM_VALID = 5
+NUM_TESTS = 5
 NUM_FOLDS = 3
 
 
