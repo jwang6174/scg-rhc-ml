@@ -9,8 +9,6 @@ import torch.nn.functional as F
 from hemo_record import NUM_STEPS, RHC_TYPE, ACC_CHANNELS, ECG_CHANNELS, IGNORE
 from torch.utils.data import Dataset, DataLoader
 
-BATCH_SIZE = 64
-
 
 class HemoDataset(Dataset):
 
