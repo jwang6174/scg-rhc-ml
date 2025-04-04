@@ -9,6 +9,8 @@ from hemo_loader import get_loader
 
 BATCH_SIZE = 64
 
+NUM_EPOCHS = 100
+
 
 class SelfCrossAttentionBlock(nn.Module):
 
@@ -96,39 +98,59 @@ class CardiovascularPredictor(nn.Module):
 
 def train(model_name, data_name, data_fold):
 
+  # Define learning rate and variable to increment when progressively decreasing
+  # the learning lrate in case valid loss does not decrease.
+  lr = 1e-4
+  lr_div = 0
+  lr_cnt = 0
+
   model = CardiovascularPredictor()
-  optim = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
+  optim = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
   criterion = nn.MSELoss()
 
+  # Move objects to GPU if available.
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
   model = model.to(device)
   criterion = criterion.to(device)
 
+  # Define best and last checkpoint paths.
   model_best_path = os.path.join('models', model_name, 'model_best.chk')
   model_last_path = os.path.join('models', model_name, 'model_last.chk')
 
+  # Load last checkpoint if exists.
   if os.path.exists(model_last_path):
     checkpoint = torch.load(model_last_path, weights_only=False)
     epoch = checkpoint['epoch'] + 1
     min_valid_loss = checkpoint['min_valid_loss']
     model.load_state_dict(checkpoint['model_state_dict'])
     optim.load_state_dict(checkpoint['optim_state_dict'])
+    lr = checkpoint['lr']
+    lr_cnt = checkpoint['lr_cnt']
+    lr_div = checkpoint['lr_div']
+    new_lr = lr / lr_div
+    for param_group in optim.param_groups:
+      param_group['lr'] = new_lr
   else:
     epoch = 0
     min_valid_loss = float('inf')
 
+  # Load segment stats for value normalization.
   filepath = os.path.join('datasets', data_name, f'global_stats_{data_fold}.json')
   with open(filepath, 'r') as f:
     global_segment_stats = json.load(f)
 
+  # Load valid segments.
   filepath = os.path.join('datasets', data_name, f'valid_segments_{data_fold}.pkl')
   valid_loader = get_loader(filepath, global_segment_stats, BATCH_SIZE)
 
+  # Load train segments.
   filepath = os.path.join('datasets', data_name, f'train_segments_{data_fold}.pkl')
   train_loader = get_loader(filepath, global_segment_stats, BATCH_SIZE)
 
-  while epoch < 500:
+  # Epoch loop.
+  while epoch < NUM_EPOCHS:
 
+    # Training loop.
     model.train()
     train_loss = 0
     for i, (acc, ecg, bmi, label) in enumerate(train_loader, start=1):
@@ -145,6 +167,7 @@ def train(model_name, data_name, data_fold):
 
       train_loss += loss.item()
 
+      # Print batch progress message.
       if i % 500 == 0:
         print(f'Epoch {epoch+1}: '
               f'Batch = {i}/{len(train_loader)}, '
@@ -153,6 +176,7 @@ def train(model_name, data_name, data_fold):
 
     train_loss /= len(train_loader)
 
+    # Calculate valid loss.
     model.eval()
     valid_loss = 0
     with torch.no_grad():
@@ -169,10 +193,12 @@ def train(model_name, data_name, data_fold):
 
     valid_loss /= len(valid_loader)
 
+    # Print epoch progress message.
     print(f'----- Epoch {epoch+1}: '
           f'Train Loss = {train_loss:.4f}, '
           f'Valid Loss = {valid_loss:.4f} -----')
 
+    # If loss improving on valid set, save new best checkpoint.
     if valid_loss < min_valid_loss:
       min_valid_loss = valid_loss
       checkpoint = {
@@ -180,12 +206,28 @@ def train(model_name, data_name, data_fold):
         'model_state_dict': model.state_dict(),
         'optim_state_dict': optim.state_dict(),
         'min_valid_loss': min_valid_loss,
+        'lr': lr,
+        'lr_div': lr_div,
+        'lr_cnt': lr_cnt,
       }
       torch.save(checkpoint, model_best_path)
+      lr_cnt = 0
       print('Model saved')
+
+    # If loss not improving on valid set for certain number of times, then
+    # decrease the learning rate.
     else:
       print('Model not saved')
+      lr_cnt += 1
+      if lr_cnt == 5:
+        lr_div += 5
+        lr_cnt = 0
+        new_lr = lr / lr_div
+        for param_group in optim.param_groups:
+          param_group['lr'] = new_lr
+        print(f'Learning rate adjusted to {new_lr}')
 
+    # Save most recent checkpoint.
     torch.save(checkpoint, model_last_path)
 
     epoch += 1
