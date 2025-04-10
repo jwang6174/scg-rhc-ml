@@ -7,8 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from hemo_loader import get_loader
 
+# Number of samples per batch.
 BATCH_SIZE = 64
 
+# Number of epochs.
 NUM_EPOCHS = 100
 
 
@@ -99,11 +101,11 @@ class CardiovascularPredictor(nn.Module):
 def train(model_name, data_name, data_fold):
 
   # Define learning rate and variable to increment when progressively decreasing
-  # the learning lrate in case valid loss does not decrease.
+  # the learning rate in case valid loss does not decrease.
   lr = 1e-4
-  lr_div = 0
-  lr_cnt = 0
-
+  lr_cnt = 0 
+  
+  # Define model, optimizer, and criterion.
   model = CardiovascularPredictor()
   optim = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
   criterion = nn.MSELoss()
@@ -126,10 +128,8 @@ def train(model_name, data_name, data_fold):
     optim.load_state_dict(checkpoint['optim_state_dict'])
     lr = checkpoint['lr']
     lr_cnt = checkpoint['lr_cnt']
-    lr_div = checkpoint['lr_div']
-    new_lr = lr / lr_div
     for param_group in optim.param_groups:
-      param_group['lr'] = new_lr
+      param_group['lr'] = lr
   else:
     epoch = 0
     min_valid_loss = float('inf')
@@ -198,34 +198,36 @@ def train(model_name, data_name, data_fold):
           f'Train Loss = {train_loss:.4f}, '
           f'Valid Loss = {valid_loss:.4f} -----')
 
+    # Initialize checkpoint
+    checkpoint = {
+      'epoch': epoch,
+      'model_state_dict': model.state_dict(),
+      'optim_state_dict': optim.state_dict(),
+      'min_valid_loss': min_valid_loss,
+      'lr': lr,
+      'lr_cnt': lr_cnt,
+    }
+
     # If loss improving on valid set, save new best checkpoint.
     if valid_loss < min_valid_loss:
       min_valid_loss = valid_loss
-      checkpoint = {
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optim_state_dict': optim.state_dict(),
-        'min_valid_loss': min_valid_loss,
-        'lr': lr,
-        'lr_div': lr_div,
-        'lr_cnt': lr_cnt,
-      }
-      torch.save(checkpoint, model_best_path)
       lr_cnt = 0
-      print('Model saved')
+      checkpoint['lr_cnt'] = lr_cnt
+      torch.save(checkpoint, model_best_path)
+      print('Saved best model')
 
     # If loss not improving on valid set for certain number of times, then
     # decrease the learning rate.
     else:
-      print('Model not saved')
       lr_cnt += 1
-      if lr_cnt == 5:
-        lr_div += 5
-        lr_cnt = 0
-        new_lr = lr / lr_div
+      if lr_cnt % 5 == 0:
+        if lr_cnt == 10:
+          epoch = NUM_EPOCHS
+          break
+        lr /= 10
         for param_group in optim.param_groups:
-          param_group['lr'] = new_lr
-        print(f'Learning rate adjusted to {new_lr}')
+          param_group['lr'] = lr
+        print(f'Learning rate adjusted to {lr}')
 
     # Save most recent checkpoint.
     torch.save(checkpoint, model_last_path)
@@ -233,6 +235,7 @@ def train(model_name, data_name, data_fold):
     epoch += 1
 
   print('Training done')
+  print(f'Best valid loss: {min_valid_loss}')
 
 
 if __name__ == '__main__':
