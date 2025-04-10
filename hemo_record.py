@@ -14,7 +14,21 @@ NUM_STEPS = 10 * SAMPLE_RATE
 # each type, as some records may be need to be duplicated a certain number
 # of times to maintain data balance for one RHC type, but a separate number
 # of times for a different RHC type.
+# RHC_TYPE = 'RAM'
+# RHC_TYPE = 'RAHR'
+# RHC_TYPE = 'RVS'
+# RHC_TYPE = 'RVD'
+# RHC_TYPE = 'RVEDP'
+# RHC_TYPE = 'RVHR'
+# RHC_TYPE = 'PAS'
+# RHC_TYPE = 'PAD'
+# RHC_TYPE = 'PAM'
+# RHC_TYPE = 'PAHR'
+# RHC_TYPE = 'PCWA Wave'
+# RHC_TYPE = 'PCWV Wave'
+# RHC_TYPE = 'PCWM'
 RHC_TYPE = 'Avg. COmL/min'
+# RHC_TYPE = 'SVmL/beat'
 
 # Define ACC channels to use.
 ACC_CHANNELS = [
