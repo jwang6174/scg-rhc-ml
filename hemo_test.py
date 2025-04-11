@@ -125,10 +125,9 @@ def test(model_name, data_name, data_fold):
       pred_y = reverse_z_score_norm(pred_y, global_stats)
       all_real = real_y if all_real is None else np.concat((all_real, real_y))
       all_pred = pred_y if all_pred is None else np.concat((all_pred, pred_y))
-  
-  # Calculate RMSE and PCC stats.
-  rmse, rmse_ci95_lower, rmse_ci95_upper = get_rmse(all_real, all_pred)
-  pcc, pcc_ci95_lower, pcc_ci95_upper = get_pcc(all_real, all_pred)
+      rmse, rmse_ci95_lower, rmse_ci95_upper = get_rmse(all_real, all_pred)
+      pcc, pcc_ci95_lower, pcc_ci95_upper = get_pcc(all_real, all_pred)
+      print(f'Fold = {data_fold}, Batch = {i}/{len(test_loader)}, RMSE = {rmse:.2f}, PCC = {pcc:.2f}') 
   
   results = {
     'rmse': rmse,
