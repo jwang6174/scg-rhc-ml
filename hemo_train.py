@@ -220,7 +220,7 @@ def train(model_name, data_name, data_fold):
     # decrease the learning rate.
     else:
       lr_cnt += 1
-      if lr_cnt % 5 == 0:
+      if lr_cnt % 2 == 0:
         if lr_cnt == 10:
           epoch = NUM_EPOCHS
           break
