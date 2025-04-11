@@ -168,7 +168,7 @@ def train(model_name, data_name, data_fold):
       train_loss += loss.item()
 
       # Print batch progress message.
-      if i % 500 == 0:
+      if i % 100 == 0:
         print(f'Epoch {epoch+1}: '
               f'Batch = {i}/{len(train_loader)}, '
               f'Batch Loss = {loss.item()/i:.4f}, '
@@ -220,10 +220,10 @@ def train(model_name, data_name, data_fold):
     # decrease the learning rate.
     else:
       lr_cnt += 1
-      if lr_cnt % 2 == 0:
-        if lr_cnt == 10:
-          epoch = NUM_EPOCHS
-          break
+      if lr_cnt == 30:
+        epoch = NUM_EPOCHS
+        break
+      if lr_cnt % 5 == 0:
         lr /= 10
         for param_group in optim.param_groups:
           param_group['lr'] = lr
