@@ -210,20 +210,21 @@ def train(model_name, data_name, data_fold):
 
     # If loss improving on valid set, save new best checkpoint.
     if valid_loss < min_valid_loss:
-      min_valid_loss = valid_loss
-      lr_cnt = 0
-      checkpoint['lr_cnt'] = lr_cnt
-      torch.save(checkpoint, model_best_path)
-      print('Saved best model')
+      if valid_loss > train_loss:
+        min_valid_loss = valid_loss
+        lr_cnt = 0
+        checkpoint['lr_cnt'] = lr_cnt
+        torch.save(checkpoint, model_best_path)
+        print('Saved best model')
 
     # If loss not improving on valid set for certain number of times, then
     # decrease the learning rate.
     else:
       lr_cnt += 1
-      if lr_cnt == 30:
-        epoch = NUM_EPOCHS
-        break
-      if lr_cnt % 5 == 0:
+      if lr_cnt % 2 == 0:
+        if lr_cnt == 10:
+          epoch = NUM_EPOCHS
+          break
         lr /= 10
         for param_group in optim.param_groups:
           param_group['lr'] = lr
