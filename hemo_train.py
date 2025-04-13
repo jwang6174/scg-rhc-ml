@@ -171,8 +171,8 @@ def train(model_name, data_name, data_fold):
       if i % 100 == 0:
         print(f'Epoch {epoch+1}: '
               f'Batch = {i}/{len(train_loader)}, '
-              f'Batch Loss = {loss.item()/i:.4f}, '
-              f'Epoch Loss = {train_loss/i:.4f} ')
+              f'Batch Loss = {loss.item()/i:.8f}, '
+              f'Epoch Loss = {train_loss/i:.8f} ')
 
     train_loss /= len(train_loader)
 
@@ -193,11 +193,6 @@ def train(model_name, data_name, data_fold):
 
     valid_loss /= len(valid_loader)
 
-    # Print epoch progress message.
-    print(f'----- Epoch {epoch+1}: '
-          f'Train Loss = {train_loss:.4f}, '
-          f'Valid Loss = {valid_loss:.4f} -----')
-
     # Initialize checkpoint
     checkpoint = {
       'epoch': epoch,
@@ -208,6 +203,11 @@ def train(model_name, data_name, data_fold):
       'lr_cnt': lr_cnt,
     }
 
+    print(f'Train Loss = {train_loss:.8f}')
+    print(f'Valid Loss = {valid_loss:.8f}')
+    print(f'Learning Rate Count = {lr_cnt}')
+    print(f'Old Learning Rate = {lr}')
+
     # If loss improving on valid set, save new best checkpoint.
     if valid_loss < min_valid_loss:
       if valid_loss > train_loss:
@@ -215,20 +215,23 @@ def train(model_name, data_name, data_fold):
         lr_cnt = 0
         checkpoint['lr_cnt'] = lr_cnt
         torch.save(checkpoint, model_best_path)
-        print('Saved best model')
+        print('Saved Best Model')
 
     # If loss not improving on valid set for certain number of times, then
     # decrease the learning rate.
     else:
       lr_cnt += 1
-      if lr_cnt % 2 == 0:
-        if lr_cnt == 10:
+      if lr_cnt % 5 == 0:
+        if lr_cnt >= 25:
           epoch = NUM_EPOCHS
-          break
-        lr /= 10
-        for param_group in optim.param_groups:
-          param_group['lr'] = lr
-        print(f'Learning rate adjusted to {lr}')
+        else:
+          lr /= 10
+          for param_group in optim.param_groups:
+            param_group['lr'] = lr
+
+    print(f'New Learning Rate = {lr}')
+    print(f'Best Valid Loss = {min_valid_loss:.8f}')
+    print('-' * 20)
 
     # Save most recent checkpoint.
     torch.save(checkpoint, model_last_path)
@@ -236,7 +239,6 @@ def train(model_name, data_name, data_fold):
     epoch += 1
 
   print('Training done')
-  print(f'Best valid loss: {min_valid_loss}')
 
 
 if __name__ == '__main__':
