@@ -48,7 +48,7 @@ IGNORE = set(['start', 'end', 'record_name'])
 # Define number of test records and folds to be used.
 NUM_VALID = 5
 NUM_TESTS = 5
-NUM_FOLDS = 3
+NUM_FOLDS = 5
 
 
 def get_start_and_end_times(record_name):
@@ -120,7 +120,7 @@ def get_guessed_challenge_time(record_name):
   """
   Some challenges were not logged in PAM_PCWP_timestamp_in_TBME.json, so it is
   difficult to know exactly when to start recording for physiologic challenge.
-  Empiricall set as the halfway between the last chamber time and overall end
+  Empirically set as the halfway between the last chamber time and overall end
   recording time.
 
   The following recordings included a physiologic challenge but were not included
@@ -149,7 +149,7 @@ def get_guessed_challenge_time(record_name):
   """
   last_chamber_time = get_last_chamber_time(record_name) 
   _ , end_time = get_start_and_end_times(record_name)
-  challenge_time = end_time - ((end_time - last_chamber_time) / 2)
+  challenge_time = end_time - ((end_time - last_chamber_time) / 4)
   return challenge_time
 
 
