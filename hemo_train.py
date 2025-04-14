@@ -100,6 +100,10 @@ class CardiovascularPredictor(nn.Module):
 
 def train(model_name, data_name, data_fold):
 
+  # Create model directory if not exists.
+  model_dir_path = os.path.join('models', model_name)
+  os.makedirs(model_dir_path, exist_ok=True)
+
   # Define learning rate and variable to increment when progressively decreasing
   # the learning rate in case valid loss does not decrease.
   lr = 1e-4
@@ -133,6 +137,10 @@ def train(model_name, data_name, data_fold):
   else:
     epoch = 0
     min_valid_loss = float('inf')
+
+  # Show best valid loss at start.
+  print(f'Best Valid Loss = {min_valid_loss:.8f}')
+  print('-' * 50)
 
   # Load segment stats for value normalization.
   filepath = os.path.join('datasets', data_name, f'global_stats_{data_fold}.json')
@@ -169,7 +177,8 @@ def train(model_name, data_name, data_fold):
 
       # Print batch progress message.
       if i % 100 == 0:
-        print(f'Epoch {epoch+1}: '
+        print(f'Fold = {data_fold}, '
+              f'Epoch = {epoch+1}, '
               f'Batch = {i}/{len(train_loader)}, '
               f'Batch Loss = {loss.item()/i:.8f}, '
               f'Epoch Loss = {train_loss/i:.8f} ')
@@ -231,7 +240,7 @@ def train(model_name, data_name, data_fold):
 
     print(f'New Learning Rate = {lr}')
     print(f'Best Valid Loss = {min_valid_loss:.8f}')
-    print('-' * 20)
+    print('-' * 50)
 
     # Save most recent checkpoint.
     torch.save(checkpoint, model_last_path)
