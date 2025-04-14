@@ -149,7 +149,7 @@ def get_guessed_challenge_time(record_name):
   """
   last_chamber_time = get_last_chamber_time(record_name) 
   _ , end_time = get_start_and_end_times(record_name)
-  challenge_time = end_time - ((end_time - last_chamber_time) / 4)
+  challenge_time = end_time - ((end_time - last_chamber_time) / 2)
   return challenge_time
 
 
