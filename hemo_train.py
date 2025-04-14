@@ -120,8 +120,8 @@ def train(model_name, data_name, data_fold):
   criterion = criterion.to(device)
 
   # Define best and last checkpoint paths.
-  model_best_path = os.path.join('models', model_name, 'model_best.chk')
-  model_last_path = os.path.join('models', model_name, 'model_last.chk')
+  model_best_path = os.path.join(model_dir_path, 'model_best.chk')
+  model_last_path = os.path.join(model_dir_path, 'model_last.chk')
 
   # Load last checkpoint if exists.
   if os.path.exists(model_last_path):
@@ -139,6 +139,7 @@ def train(model_name, data_name, data_fold):
     min_valid_loss = float('inf')
 
   # Show best valid loss at start.
+  print(f'Fold = {data_fold}')
   print(f'Best Valid Loss = {min_valid_loss:.8f}')
   print('-' * 50)
 
@@ -177,8 +178,7 @@ def train(model_name, data_name, data_fold):
 
       # Print batch progress message.
       if i % 100 == 0:
-        print(f'Fold = {data_fold}, '
-              f'Epoch = {epoch+1}, '
+        print(f'Epoch = {epoch+1}, '
               f'Batch = {i}/{len(train_loader)}, '
               f'Batch Loss = {loss.item()/i:.8f}, '
               f'Epoch Loss = {train_loss/i:.8f} ')
@@ -212,6 +212,7 @@ def train(model_name, data_name, data_fold):
       'lr_cnt': lr_cnt,
     }
 
+    print(f'Model = {model_name}')
     print(f'Train Loss = {train_loss:.8f}')
     print(f'Valid Loss = {valid_loss:.8f}')
     print(f'Learning Rate Count = {lr_cnt}')
@@ -223,6 +224,7 @@ def train(model_name, data_name, data_fold):
         min_valid_loss = valid_loss
         lr_cnt = 0
         checkpoint['lr_cnt'] = lr_cnt
+        checkpoint['min_valid_loss'] = min_valid_loss
         torch.save(checkpoint, model_best_path)
         print('Saved Best Model')
 
@@ -231,7 +233,7 @@ def train(model_name, data_name, data_fold):
     else:
       lr_cnt += 1
       if lr_cnt % 5 == 0:
-        if lr_cnt >= 25:
+        if lr_cnt >= 10:
           epoch = NUM_EPOCHS
         else:
           lr /= 10
