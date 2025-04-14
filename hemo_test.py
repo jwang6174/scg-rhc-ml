@@ -108,6 +108,9 @@ def test(model_name, data_name, data_fold):
     model = CardiovascularPredictor()
     model.load_state_dict(checkpoint['model_state_dict'])
 
+    print(f'Model = {model_name}_{data_fold}')
+    print(f"Best Valid Loss = {checkpoint['min_valid_loss']}")
+
     # Load global stats for vector normalization.
     stats_path = os.path.join('datasets', data_name, 
                              f'global_stats_{data_fold}.json')
