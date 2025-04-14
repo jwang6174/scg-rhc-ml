@@ -109,6 +109,7 @@ def test(model_name, data_name, data_fold):
     model.load_state_dict(checkpoint['model_state_dict'])
 
     print(f'Model = {model_name}_{data_fold}')
+    print(f"Epoch = {checkpoint['epoch']}")
     print(f"Best Valid Loss = {checkpoint['min_valid_loss']}")
 
     # Load global stats for vector normalization.
