@@ -48,7 +48,7 @@ IGNORE = set(['start', 'end', 'record_name'])
 # Define number of test records and folds to be used.
 NUM_VALID = 5
 NUM_TESTS = 5
-NUM_FOLDS = 5
+NUM_FOLDS = 3
 
 
 def get_start_and_end_times(record_name):
