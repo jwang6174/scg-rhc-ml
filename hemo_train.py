@@ -135,7 +135,7 @@ def train(model_name, data_name, data_fold):
     for param_group in optim.param_groups:
       param_group['lr'] = lr
   else:
-    epoch = 0
+    epoch = 1
     min_valid_loss = float('inf')
 
   # Show best valid loss at start.
@@ -157,7 +157,7 @@ def train(model_name, data_name, data_fold):
   train_loader = get_loader(filepath, global_segment_stats, BATCH_SIZE)
 
   # Epoch loop.
-  while epoch < NUM_EPOCHS:
+  while epoch <= NUM_EPOCHS:
 
     # Training loop.
     model.train()
@@ -178,7 +178,7 @@ def train(model_name, data_name, data_fold):
 
       # Print batch progress message.
       if i % 100 == 0:
-        print(f'Epoch = {epoch+1}, '
+        print(f'Epoch = {epoch}, '
               f'Batch = {i}/{len(train_loader)}, '
               f'Batch Loss = {loss.item()/i:.8f}, '
               f'Epoch Loss = {train_loss/i:.8f} ')
@@ -207,6 +207,8 @@ def train(model_name, data_name, data_fold):
       'epoch': epoch,
       'model_state_dict': model.state_dict(),
       'optim_state_dict': optim.state_dict(),
+      'train_loss': train_loss,
+      'valid_loss': valid_loss,
       'min_valid_loss': min_valid_loss,
       'lr': lr,
       'lr_cnt': lr_cnt,
@@ -239,8 +241,7 @@ def train(model_name, data_name, data_fold):
           lr /= 10
           for param_group in optim.param_groups:
             param_group['lr'] = lr
-
-    print(f'New Learning Rate = {lr}')
+        print(f'New Learning Rate = {lr}')
     print(f'Best Valid Loss = {min_valid_loss:.8f}')
     print('-' * 50)
 
